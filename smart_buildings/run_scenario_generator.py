@@ -45,6 +45,7 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from smart_buildings.scenario_paths import normalize_gin_paths
 from smart_buildings.smart_control.utils.scenario_generator import (
     generate_scenario_from_config,
     list_weather_presets,
@@ -189,6 +190,7 @@ def main(argv=None) -> None:
         )
         result = generate_scenario_from_config(config)
         out = result["output_dir"]
+        normalize_gin_paths(Path(out) / "config.gin")
         generated.append(out)
         print(f"  {Path(building).stem} + {Path(weather).stem} -> {out}")
 
