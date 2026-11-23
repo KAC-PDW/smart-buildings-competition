@@ -1,0 +1,1048 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smart Buildings 3D HVAC 시뮬레이션 뷰어 — building_train_1</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background: #060a13;
+      color: #e2e8f0;
+      margin: 0;
+      overflow-x: hidden;
+    }
+    .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+    #viewport {
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: grab;
+    }
+    #viewport:active { cursor: grabbing; }
+    .panel {
+      background: rgba(15, 23, 42, 0.86);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(148, 163, 184, 0.16);
+    }
+    .drop-active {
+      outline: 2px dashed #38bdf8;
+      outline-offset: -6px;
+      background: rgba(14, 165, 233, 0.12) !important;
+    }
+    input[type="range"] {
+      accent-color: #38bdf8;
+    }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.4); }
+    ::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.3); border-radius: 3px; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+  <!-- Top Header -->
+  <header class="border-b border-slate-800/80 bg-slate-950/95 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 z-20">
+    <div class="flex items-center gap-3 min-w-0">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-sky-500 to-emerald-500 flex items-center justify-center text-slate-950 font-bold text-sm shrink-0">3D</div>
+      <div class="min-w-0">
+        <h1 class="text-sm sm:text-base font-semibold text-white truncate">Smart Buildings 3D HVAC 뷰어</h1>
+        <p id="scenarioSubtitle" class="text-xs text-slate-400 truncate">building_train_1 (3층 · 39개 구역 · 4 AHU + HWS)</p>
+      </div>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-2">
+      <select id="presetSelect" aria-label="시나리오 프리셋 선택" class="bg-slate-900 border border-slate-700 text-slate-100 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-sky-500">
+        <option value="fairbanks_pid">Fairbanks · pid_water (혹한)</option>
+        <option value="fairbanks_armA">Fairbanks · Arm A 개선안 (혹한)</option>
+        <option value="phoenix_pid">Phoenix · pid_water (폭염)</option>
+        <option value="singapore_pid">Singapore · pid_water (열대·펌프낭비)</option>
+        <option value="singapore_armA">Singapore · Arm A 개선안 (열대)</option>
+        <option value="atlanta_pid">Atlanta · pid_water (온화)</option>
+      </select>
+
+      <label for="jsonFileInput" class="cursor-pointer bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/40 text-sky-300 text-xs font-medium px-3 py-1.5 rounded-lg transition">
+        JSON 불러오기
+      </label>
+      <input id="jsonFileInput" type="file" accept=".json,application/json" class="hidden" />
+
+      <button id="downloadSampleBtn" type="button" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-medium px-3 py-1.5 rounded-lg transition">
+        샘플 JSON
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Workspace -->
+  <main id="dropZone" class="flex-1 grid grid-cols-1 lg:grid-cols-12 min-h-0 relative">
+    <!-- 3D Viewport Area -->
+    <section class="lg:col-span-8 xl:col-span-9 relative min-h-[420px] lg:min-h-[560px] bg-slate-950 overflow-hidden">
+      <div id="viewportContainer" class="w-full h-full min-h-[420px] lg:min-h-[560px]">
+        <canvas id="viewport"></canvas>
+      </div>
+
+      <!-- Top-left View Controls -->
+      <div class="absolute top-3 left-3 flex flex-wrap items-center gap-1.5 z-10">
+        <div class="panel rounded-lg p-1 flex items-center gap-1 text-xs">
+          <button type="button" data-floor="all" class="floor-btn px-2 py-1 rounded bg-sky-500 text-slate-950 font-semibold">전체</button>
+          <button type="button" data-floor="0" class="floor-btn px-2 py-1 rounded text-slate-300 hover:bg-slate-800">1F</button>
+          <button type="button" data-floor="1" class="floor-btn px-2 py-1 rounded text-slate-300 hover:bg-slate-800">2F</button>
+          <button type="button" data-floor="2" class="floor-btn px-2 py-1 rounded text-slate-300 hover:bg-slate-800">3F</button>
+        </div>
+
+        <button id="explodeBtn" type="button" class="panel text-xs px-2.5 py-1.5 rounded-lg text-slate-200 hover:border-sky-500/60 transition">
+          층 분리: OFF
+        </button>
+        <button id="ductsBtn" type="button" class="panel text-xs px-2.5 py-1.5 rounded-lg text-sky-300 border-sky-500/40 transition">
+          AHU 덕트: ON
+        </button>
+        <button id="resetCamBtn" type="button" class="panel text-xs px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-white transition">
+          시점 초기화
+        </button>
+      </div>
+
+      <!-- Top-right Thermal Legend -->
+      <div class="panel absolute top-3 right-3 rounded-lg px-3 py-2 text-[11px] z-10 hidden sm:block">
+        <div class="font-medium text-slate-300 mb-1">쾌적 밴드 대비 온도 편차</div>
+        <div class="w-44 h-2 rounded-full" style="background: linear-gradient(90deg, #2563eb 0%, #38bdf8 25%, #10b981 50%, #f59e0b 75%, #ef4444 100%);"></div>
+        <div class="flex justify-between text-slate-400 mt-1 mono">
+          <span>-5K 이하</span>
+          <span>적정(0)</span>
+          <span>+5K 이상</span>
+        </div>
+        <div class="flex items-center gap-1.5 mt-1.5 text-rose-400">
+          <span class="w-2.5 h-2.5 rounded-sm border border-rose-500 bg-rose-500/30 inline-block"></span>
+          <span>5K 초과 = 2차 페널티 경고</span>
+        </div>
+      </div>
+
+      <!-- Bottom-left Drag & Drop Hint + Alert Badge -->
+      <div class="absolute bottom-3 left-3 flex flex-wrap items-center gap-2 z-10 pointer-events-none">
+        <div id="alertBadge" class="hidden bg-rose-500/20 border border-rose-500/60 text-rose-200 text-xs px-2.5 py-1 rounded-lg font-medium">
+          5K 초과 이탈 구역: <span id="alertCount" class="mono font-bold">0</span>개
+        </div>
+        <div class="panel text-[11px] text-slate-400 px-2.5 py-1 rounded-lg">
+          드래그: 회전 · 휠: 줌 · 클릭: 구역 상세 · JSON 파일 드래그앤드롭 지원
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Telemetry & Inspector Sidebar -->
+    <aside class="lg:col-span-4 xl:col-span-3 border-t lg:border-t-0 lg:border-l border-slate-800/80 bg-slate-900/75 p-3.5 flex flex-col gap-3 overflow-y-auto max-h-[640px] lg:max-h-[calc(100vh-132px)]">
+      <!-- KPI Grid -->
+      <div class="grid grid-cols-2 gap-2">
+        <div class="bg-slate-950/70 border border-slate-800 rounded-lg p-2.5">
+          <div class="text-[11px] text-slate-400">누적 MAE (vs 0)</div>
+          <div id="kpiMae" class="mono text-lg font-bold text-sky-400 mt-0.5">0.00000</div>
+          <div id="kpiStepReward" class="text-[11px] text-slate-500 mono">스텝 보상: 0.000</div>
+        </div>
+        <div class="bg-slate-950/70 border border-slate-800 rounded-lg p-2.5">
+          <div class="text-[11px] text-slate-400">외기 온도 (OAT)</div>
+          <div id="kpiOat" class="mono text-lg font-bold text-amber-300 mt-0.5">0.0°C</div>
+          <div id="kpiBand" class="text-[11px] text-slate-400 mono">밴드: 20.9~23.9°C</div>
+        </div>
+      </div>
+
+      <!-- Mode & Occupancy Bar -->
+      <div class="bg-slate-950/70 border border-slate-800 rounded-lg px-3 py-2 flex items-center justify-between text-xs">
+        <div class="flex items-center gap-2">
+          <span id="modeDot" class="w-2 h-2 rounded-full bg-emerald-400"></span>
+          <span id="modeLabel" class="font-medium text-slate-200">쾌적 모드 (주간)</span>
+        </div>
+        <span class="text-slate-400">재실 <strong id="kpiOcc" class="mono text-slate-100">0</strong>명</span>
+      </div>
+
+      <!-- AHU & HWS Status -->
+      <div class="bg-slate-950/70 border border-slate-800 rounded-lg p-2.5">
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="text-xs font-semibold text-slate-200">AHU / HWS 가동 상태</h2>
+          <select id="ahuFilterSelect" aria-label="AHU 필터" class="bg-slate-900 border border-slate-700 text-slate-200 text-[11px] rounded px-1.5 py-0.5">
+            <option value="all">전체 AHU</option>
+            <option value="1">AHU-1 (1~10)</option>
+            <option value="2">AHU-2 (11~20)</option>
+            <option value="3">AHU-3 (21~29)</option>
+            <option value="4">AHU-4 (30~39)</option>
+          </select>
+        </div>
+        <div id="ahuList" class="space-y-1.5 text-xs"></div>
+
+        <!-- HWS Card -->
+        <div id="hwsCard" class="mt-2 pt-2 border-t border-slate-800 flex items-center justify-between text-xs">
+          <div>
+            <span class="font-semibold text-orange-300">HWS 보일러·펌프</span>
+            <div id="hwsDetail" class="text-[11px] text-slate-400 mono">수온 --°C · 차압 --%</div>
+          </div>
+          <span id="hwsBadge" class="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-800 text-slate-400">OFF</span>
+        </div>
+        <div id="hwsBugNote" class="hidden mt-1.5 text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">
+          냉방 전용 구간에서 온수 펌프가 가동 중 (pid_water 낭비 지점)
+        </div>
+      </div>
+
+      <!-- Selected Zone Inspector -->
+      <div class="bg-slate-950/70 border border-slate-800 rounded-lg p-2.5">
+        <div class="flex items-center justify-between mb-1.5">
+          <h2 class="text-xs font-semibold text-slate-200">선택 구역 상세 (VAV)</h2>
+          <span id="zoneTag" class="mono text-[11px] px-1.5 py-0.5 rounded bg-slate-800 text-sky-300">room_1</span>
+        </div>
+        <div id="zoneInspector" class="grid grid-cols-2 gap-x-2 gap-y-1 text-xs">
+          <div class="text-slate-400">소속 AHU / 층</div>
+          <div id="ziMeta" class="mono text-right text-slate-200">AHU-1 · 1F</div>
+          <div class="text-slate-400">구역 온도</div>
+          <div id="ziTemp" class="mono text-right font-semibold text-emerald-400">--°C</div>
+          <div class="text-slate-400">밴드 편차</div>
+          <div id="ziDev" class="mono text-right text-slate-200">0.00 K</div>
+          <div class="text-slate-400">VAV 댐퍼 개도</div>
+          <div id="ziDamper" class="mono text-right text-sky-300">--%</div>
+          <div class="text-slate-400">재열 밸브 개도</div>
+          <div id="ziReheat" class="mono text-right text-orange-300">--%</div>
+        </div>
+      </div>
+
+      <!-- Mini Reward Sparkline -->
+      <div class="bg-slate-950/70 border border-slate-800 rounded-lg p-2.5">
+        <div class="flex items-center justify-between text-[11px] text-slate-400 mb-1">
+          <span>스텝별 손실 추이 (|Reward|)</span>
+          <span id="sparkSource" class="text-slate-500">내장 데모</span>
+        </div>
+        <svg id="sparklineSvg" viewBox="0 0 260 54" class="w-full h-14 block"></svg>
+      </div>
+    </aside>
+  </main>
+
+  <!-- Bottom Timeline Playback Bar -->
+  <footer class="border-t border-slate-800/80 bg-slate-950/95 px-4 py-2.5 flex flex-wrap items-center gap-3 z-20">
+    <div class="flex items-center gap-1.5">
+      <button id="stepPrevBtn" type="button" aria-label="이전 5분 스텝" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg">◀ -5m</button>
+      <button id="playPauseBtn" type="button" class="bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold text-xs px-3.5 py-1.5 rounded-lg min-w-[74px]">일시정지</button>
+      <button id="stepNextBtn" type="button" aria-label="다음 5분 스텝" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg">+5m ▶</button>
+      <select id="speedSelect" aria-label="재생 속도" class="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1.5">
+        <option value="1">1x</option>
+        <option value="4" selected>4x</option>
+        <option value="12">12x</option>
+      </select>
+    </div>
+
+    <div class="flex-1 min-w-[200px] flex items-center gap-3">
+      <input id="timeSlider" type="range" min="0" max="287" value="96" class="w-full" />
+      <div class="mono text-xs text-slate-200 whitespace-nowrap">
+        <span id="clockLabel">Day 1 08:00</span>
+        <span class="text-slate-500 ml-1">(<span id="stepLabel">96</span>/<span id="totalStepsLabel">288</span>)</span>
+      </div>
+    </div>
+  </footer>
+
+  <!-- In-page Toast -->
+  <div id="toast" class="fixed bottom-16 right-4 z-50 hidden bg-slate-900 border border-sky-500/50 text-slate-100 text-xs px-3.5 py-2.5 rounded-lg shadow-xl max-w-xs"></div>
+
+  <script>
+    // =========================================================================
+    // 1. Authentic building_train_1 Geometry (extracted from floor_plan.npy & config.gin)
+    // Format: [roomId, floor(0..2), x0, y0, x1, y1, ahuIdx(1..4)]
+    // =========================================================================
+    const BUILDING_TRAIN_1_ROOMS = [
+      [1, 0, 8, 8, 92, 49, 1], [2, 0, 98, 8, 158, 69, 1], [3, 0, 162, 8, 222, 69, 1],
+      [4, 0, 227, 8, 282, 99, 1], [5, 0, 8, 54, 29, 125, 1], [6, 0, 33, 53, 93, 126, 1],
+      [7, 0, 286, 52, 330, 98, 1], [8, 0, 97, 75, 146, 181, 1], [9, 0, 150, 74, 223, 130, 1],
+      [10, 0, 228, 104, 271, 181, 1], [11, 0, 275, 103, 330, 156, 2], [12, 0, 8, 130, 92, 181, 2],
+      [13, 0, 151, 134, 222, 181, 2], [14, 1, 8, 16, 39, 100, 2], [15, 1, 43, 16, 102, 101, 2],
+      [16, 1, 108, 16, 151, 87, 2], [17, 1, 155, 16, 210, 88, 2], [18, 1, 216, 16, 281, 55, 2],
+      [19, 1, 216, 59, 286, 98, 2], [20, 1, 290, 60, 330, 97, 2], [21, 1, 107, 93, 146, 189, 3],
+      [22, 1, 150, 92, 211, 189, 3], [23, 1, 8, 106, 31, 189, 3], [24, 1, 35, 105, 102, 149, 3],
+      [25, 1, 215, 103, 264, 189, 3], [26, 1, 268, 102, 330, 164, 3], [27, 1, 36, 153, 102, 189, 3],
+      [28, 2, 8, 16, 65, 75, 3], [29, 2, 71, 16, 100, 84, 3], [30, 2, 104, 16, 135, 84, 4],
+      [31, 2, 139, 16, 183, 77, 4], [32, 2, 187, 16, 226, 77, 4], [33, 2, 232, 16, 281, 56, 4],
+      [34, 2, 8, 79, 66, 189, 4], [35, 2, 232, 60, 330, 100, 4], [36, 2, 70, 89, 134, 131, 4],
+      [37, 2, 140, 82, 227, 132, 4], [38, 2, 232, 104, 330, 189, 4], [39, 2, 71, 136, 226, 189, 4]
+    ];
+
+    const AHU_COLORS = [0x38bdf8, 0xa78bfa, 0x34d399, 0xfbbf24];
+    const COMFORT_DAY = [294.0, 297.0]; // 20.85°C ~ 23.85°C (config.yaml)
+    const COMFORT_NIGHT = [289.0, 298.0]; // 15.85°C ~ 24.85°C
+
+    // =========================================================================
+    // 2. Built-in Physics-Grounded 24h (288 x 5-min) Demo Rollout Generator
+    // =========================================================================
+    const PRESETS = {
+      fairbanks_pid:  { label: 'Fairbanks · pid_water', oatMean: 251.5, oatAmp: 4.5, mode: 'pid_water', weather: 'fairbanks_1' },
+      fairbanks_armA: { label: 'Fairbanks · Arm A 개선안', oatMean: 251.5, oatAmp: 4.5, mode: 'arm_a', weather: 'fairbanks_1' },
+      phoenix_pid:    { label: 'Phoenix · pid_water', oatMean: 309.0, oatAmp: 8.5, mode: 'pid_water', weather: 'phoenix_5' },
+      singapore_pid:  { label: 'Singapore · pid_water', oatMean: 302.0, oatAmp: 3.2, mode: 'pid_water', weather: 'singapore_8' },
+      singapore_armA: { label: 'Singapore · Arm A 개선안', oatMean: 302.0, oatAmp: 3.2, mode: 'arm_a', weather: 'singapore_8' },
+      atlanta_pid:    { label: 'Atlanta · pid_water', oatMean: 291.5, oatAmp: 6.0, mode: 'pid_water', weather: 'atlanta_2' }
+    };
+
+    function generateDemoRollout(presetKey) {
+      const cfg = PRESETS[presetKey] || PRESETS.fairbanks_pid;
+      const numSteps = 288; // 24 hours at 5-minute steps
+      const temps = BUILDING_TRAIN_1_ROOMS.map((r, i) => {
+        const isEdge = r[2] <= 12 || r[4] >= 320 || r[3] <= 16 || r[5] >= 180;
+        const drift = cfg.oatMean < 275 ? (isEdge ? -4.2 : -1.2) : (isEdge ? 2.4 : 0.8);
+        return 295.0 + drift + ((i % 5) - 2) * 0.35;
+      });
+
+      const steps = [];
+      for (let t = 0; t < numSteps; t++) {
+        const hour = Math.floor((t * 5) / 60);
+        const minute = (t * 5) % 60;
+        const isWork = hour >= 6 && hour < 19;
+        const isPreHeat = cfg.mode === 'arm_a' && (hour === 5);
+        const band = isWork ? COMFORT_DAY : (isPreHeat ? [293.5, 297.2] : COMFORT_NIGHT);
+        const occ = isWork ? Math.round(78 * Math.sin(((hour - 5.5) / 14) * Math.PI)) : 0;
+        const oat = cfg.oatMean + cfg.oatAmp * Math.sin(((t / 288) - 0.35) * 2 * Math.PI);
+
+        const ahuState = [];
+        let anyActive = false;
+        let anyHeating = false;
+        const dampers = new Array(39).fill(0.1);
+        const reheats = new Array(39).fill(0.0);
+
+        for (let a = 1; a <= 4; a++) {
+          const idxs = [];
+          for (let i = 0; i < BUILDING_TRAIN_1_ROOMS.length; i++) {
+            if (BUILDING_TRAIN_1_ROOMS[i][6] === a) idxs.push(i);
+          }
+          const avgT = idxs.reduce((s, idx) => s + temps[idx], 0) / idxs.length;
+          let worstErr = 0;
+          idxs.forEach(idx => {
+            const zt = temps[idx];
+            const e = zt < band[0] ? (band[0] - zt) : (zt > band[1] ? (band[1] - zt) : 0);
+            if (Math.abs(e) > Math.abs(worstErr)) worstErr = e;
+          });
+          const meanErr = avgT < band[0] ? (band[0] - avgT) : (avgT > band[1] ? (band[1] - avgT) : 0);
+          const ctrlErr = (cfg.mode === 'arm_a' && Math.abs(worstErr) >= 3.0) ? worstErr : meanErr;
+
+          const on = Math.abs(ctrlErr) > 0.05 ? 1 : 0;
+          const effort = Math.max(-1, Math.min(1, ctrlErr * 0.5));
+          const pressurePa = on ? Math.max(200, Math.round(200 + Math.abs(effort) * 1800)) : 0;
+          const satK = on ? (effort < 0 ? 285 + (1 + effort) * 10 : Math.min(295, 0.7 * avgT + 0.3 * oat)) : avgT;
+          const recirc = (on && effort < 0 && oat < avgT - 1.5) ? 0.35 : 0.70;
+
+          if (on) anyActive = true;
+          if (on && ctrlErr > 0) anyHeating = true;
+
+          ahuState.push({
+            id: `ahu_${a}`,
+            on,
+            sat_k: Number(satK.toFixed(2)),
+            pressure_pa: pressurePa,
+            recirc: Number(recirc.toFixed(2))
+          });
+
+          // Update zones under this AHU
+          idxs.forEach(idx => {
+            const r = BUILDING_TRAIN_1_ROOMS[idx];
+            const isEdge = r[2] <= 12 || r[4] >= 320 || r[3] <= 16 || r[5] >= 180;
+            const zt = temps[idx];
+            const zErr = zt < band[0] ? (band[0] - zt) : (zt > band[1] ? (band[1] - zt) : 0);
+            const damp = Math.max(0.1, Math.min(1.0, Math.abs(zErr) / 2.0));
+            const rh = zErr > 0 ? Math.min(1.0, zErr / 2.0) : 0.0;
+            dampers[idx] = Number(damp.toFixed(2));
+            reheats[idx] = Number(rh.toFixed(2));
+
+            // Simple RC thermal dynamics step (5 min)
+            const kEnv = isEdge ? 0.012 : 0.004;
+            const qEnv = kEnv * (oat - zt);
+            const qInternal = isWork ? 0.045 : 0.009;
+            const hwsGain = cfg.mode === 'arm_a' ? 0.42 : 0.30;
+            const qHvac = on
+              ? (rh > 0 ? rh * damp * hwsGain : damp * 0.09 * (satK - zt))
+              : 0;
+            temps[idx] = zt + qEnv + qInternal + qHvac;
+          });
+        }
+
+        // HWS pump bug in pid_water (runs whenever anyActive), fixed in Arm A (anyHeating only)
+        const hwsOn = cfg.mode === 'pid_water' ? (anyActive ? 1 : 0) : (anyHeating ? 1 : 0);
+        const hwsTempK = anyHeating ? (cfg.mode === 'arm_a' ? 344.0 : 330.0) : 310.0;
+        const hwsPumpPct = hwsOn ? (anyHeating ? 100 : 100) : 0;
+
+        // Compute competition-style step regret reward (0.6 comfort + 0.2 energy + 0.2 carbon)
+        let comfortPen = 0;
+        for (let i = 0; i < temps.length; i++) {
+          const zt = temps[i];
+          const dev = zt < band[0] ? (band[0] - zt) : (zt > band[1] ? (zt - band[1]) : 0);
+          if (dev > 0) {
+            const p = dev <= 5.0 ? (dev / 5.0) : (1.0 + Math.pow((dev - 5.0) / 2.5, 2));
+            comfortPen += p * (isWork ? 1.0 : 0.15);
+          }
+        }
+        comfortPen = (comfortPen / temps.length) * 0.14;
+        const fanPower = ahuState.reduce((s, a) => s + (a.on ? (a.pressure_pa / 2000) * 0.014 : 0), 0);
+        const pumpPower = hwsOn ? 0.018 : 0;
+        const gasPower = anyHeating ? 0.022 : 0;
+        const stepReward = -(0.6 * comfortPen + 0.4 * (fanPower + pumpPower + gasPower));
+
+        steps.push({
+          step: t,
+          time_label: `Day 1 ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+          is_work: isWork,
+          oat_k: Number(oat.toFixed(2)),
+          band_k: band,
+          occupancy: occ,
+          reward: Number(stepReward.toFixed(5)),
+          zone_temps_k: temps.map(v => Number(v.toFixed(2))),
+          dampers,
+          reheats,
+          ahus: ahuState,
+          hws: { on: hwsOn, temp_k: hwsTempK, pump_pct: hwsPumpPct, any_heating: anyHeating }
+        });
+      }
+
+      return {
+        source: '내장 데모',
+        building: 'building_train_1',
+        weather: cfg.weather,
+        policy: cfg.label,
+        steps
+      };
+    }
+
+    // =========================================================================
+    // 3. Application State
+    // =========================================================================
+    const state = {
+      rollout: generateDemoRollout('fairbanks_pid'),
+      stepIdx: 96,
+      playing: true,
+      speed: 4,
+      selectedRoomId: 1,
+      floorFilter: 'all',
+      ahuFilter: 'all',
+      exploded: false,
+      showDucts: true,
+      lastFrameTime: 0,
+      stepAccum: 0
+    };
+
+    // =========================================================================
+    // 4. Three.js 3D Scene Setup
+    // =========================================================================
+    const canvas = document.getElementById('viewport');
+    const container = document.getElementById('viewportContainer');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setClearColor(0x060a13, 1);
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x060a13, 0.011);
+
+    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 200);
+
+    // Custom Orbit Camera State (no external OrbitControls dependency needed)
+    const camState = {
+      theta: Math.PI * 0.24,
+      phi: Math.PI * 0.30,
+      radius: 38,
+      target: new THREE.Vector3(0, 3.2, 0),
+      dragging: false,
+      lastX: 0,
+      lastY: 0,
+      moved: false
+    };
+
+    function updateCamera() {
+      const sinPhi = Math.sin(camState.phi);
+      camera.position.set(
+        camState.target.x + camState.radius * sinPhi * Math.sin(camState.theta),
+        camState.target.y + camState.radius * Math.cos(camState.phi),
+        camState.target.z + camState.radius * sinPhi * Math.cos(camState.theta)
+      );
+      camera.lookAt(camState.target);
+    }
+
+    // Lighting & Ground Grid
+    scene.add(new THREE.AmbientLight(0xcbd5e1, 0.72));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.85);
+    dirLight.position.set(22, 36, 18);
+    scene.add(dirLight);
+    const fillLight = new THREE.DirectionalLight(0x38bdf8, 0.28);
+    fillLight.position.set(-20, 14, -18);
+    scene.add(fillLight);
+
+    const grid = new THREE.GridHelper(48, 24, 0x1e293b, 0x0f172a);
+    grid.position.y = -0.05;
+    scene.add(grid);
+
+    // Coordinate scaling: x in [0..338] -> [-13..13], y in [0..195] -> [-7.5..7.5]
+    const SCALE = 0.076;
+    const CX = 169;
+    const CZ = 98;
+    const FLOOR_H = 2.4;
+
+    const floorGroups = [new THREE.Group(), new THREE.Group(), new THREE.Group()];
+    floorGroups.forEach(g => scene.add(g));
+    const rooftopGroup = new THREE.Group();
+    scene.add(rooftopGroup);
+    const ductGroup = new THREE.Group();
+    scene.add(ductGroup);
+
+    // Build 3 floor slabs
+    floorGroups.forEach((fg) => {
+      const slabGeo = new THREE.BoxGeometry(336 * SCALE, 0.14, 192 * SCALE);
+      const slabMat = new THREE.MeshStandardMaterial({
+        color: 0x0f172a, roughness: 0.9, metalness: 0.1, transparent: true, opacity: 0.92
+      });
+      const slab = new THREE.Mesh(slabGeo, slabMat);
+      slab.position.set(0, -0.07, 0);
+      fg.add(slab);
+    });
+
+    // Build 39 Authentic Zone Meshes
+    const zoneMeshes = [];
+    const alertEdges = [];
+    const zoneTopCenters = [];
+
+    BUILDING_TRAIN_1_ROOMS.forEach(([id, fl, x0, y0, x1, y1, ahuIdx]) => {
+      const w = Math.max(0.4, (x1 - x0) * SCALE);
+      const d = Math.max(0.4, (y1 - y0) * SCALE);
+      const h = FLOOR_H * 0.78;
+      const cx = ((x0 + x1) * 0.5 - CX) * SCALE;
+      const cz = ((y0 + y1) * 0.5 - CZ) * SCALE;
+
+      const geo = new THREE.BoxGeometry(w, h, d);
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0x10b981,
+        roughness: 0.42,
+        metalness: 0.08,
+        transparent: true,
+        opacity: 0.86
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(cx, h * 0.5, cz);
+      mesh.userData = { roomId: id, floor: fl, ahuIdx };
+      floorGroups[fl].add(mesh);
+
+      // Subtle border wireframe
+      const edges = new THREE.EdgesGeometry(geo);
+      const lineMat = new THREE.LineBasicMaterial({ color: 0x0f172a, transparent: true, opacity: 0.55 });
+      const wire = new THREE.LineSegments(edges, lineMat);
+      mesh.add(wire);
+
+      // Alert halo wireframe for > 5K quadratic penalty
+      const alertMat = new THREE.LineBasicMaterial({ color: 0xf43f5e, transparent: true, opacity: 0.0 });
+      const alertWire = new THREE.LineSegments(edges, alertMat);
+      alertWire.scale.set(1.03, 1.04, 1.03);
+      mesh.add(alertWire);
+
+      zoneMeshes.push(mesh);
+      alertEdges.push(alertWire);
+      zoneTopCenters.push({ id, fl, ahuIdx, cx, cz });
+    });
+
+    // Build 4 Rooftop AHU units + 1 HWS Boiler/Pump
+    const ahuUnits = [];
+    const ahuPositions = [
+      new THREE.Vector3(-8.2, 0.7, -3.5),
+      new THREE.Vector3(-2.6, 0.7, 2.2),
+      new THREE.Vector3(3.0, 0.7, -2.8),
+      new THREE.Vector3(8.0, 0.7, 2.4)
+    ];
+
+    ahuPositions.forEach((pos, idx) => {
+      const group = new THREE.Group();
+      group.position.copy(pos);
+
+      const body = new THREE.Mesh(
+        new THREE.BoxGeometry(2.6, 1.2, 1.8),
+        new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.4, metalness: 0.5 })
+      );
+      group.add(body);
+
+      const strip = new THREE.Mesh(
+        new THREE.BoxGeometry(2.64, 0.22, 1.84),
+        new THREE.MeshStandardMaterial({
+          color: AHU_COLORS[idx],
+          emissive: AHU_COLORS[idx],
+          emissiveIntensity: 0.55
+        })
+      );
+      strip.position.y = 0.45;
+      group.add(strip);
+
+      const fan = new THREE.Mesh(
+        new THREE.BoxGeometry(1.1, 0.08, 0.22),
+        new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.6 })
+      );
+      fan.position.y = 0.66;
+      group.add(fan);
+
+      rooftopGroup.add(group);
+      ahuUnits.push({ group, strip, fan, idx: idx + 1 });
+    });
+
+    // HWS Boiler + Pump Unit
+    const hwsGroup = new THREE.Group();
+    hwsGroup.position.set(-10.8, 0.75, 4.2);
+    const boiler = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.75, 0.75, 1.5, 20),
+      new THREE.MeshStandardMaterial({ color: 0x334155, emissive: 0xf97316, emissiveIntensity: 0.1, metalness: 0.4 })
+    );
+    hwsGroup.add(boiler);
+    const pumpRing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.55, 0.12, 10, 20),
+      new THREE.MeshStandardMaterial({ color: 0xfb923c, emissive: 0xf97316, emissiveIntensity: 0.1 })
+    );
+    pumpRing.rotation.x = Math.PI / 2;
+    pumpRing.position.y = 0.8;
+    hwsGroup.add(pumpRing);
+    rooftopGroup.add(hwsGroup);
+
+    // Duct Lines from AHUs to Zones
+    const ductLines = [];
+    function rebuildDucts() {
+      while (ductGroup.children.length) ductGroup.remove(ductGroup.children[0]);
+      ductLines.length = 0;
+
+      const spacing = state.exploded ? FLOOR_H * 2.05 : FLOOR_H;
+      const roofY = spacing * 3 + 0.1;
+
+      zoneTopCenters.forEach(z => {
+        const ahuPos = ahuPositions[z.ahuIdx - 1];
+        const start = new THREE.Vector3(ahuPos.x, roofY + 0.4, ahuPos.z);
+        const mid = new THREE.Vector3(z.cx, roofY + 0.4, z.cz);
+        const end = new THREE.Vector3(z.cx, z.fl * spacing + FLOOR_H * 0.78, z.cz);
+
+        const geo = new THREE.BufferGeometry().setFromPoints([start, mid, end]);
+        const mat = new THREE.LineBasicMaterial({
+          color: AHU_COLORS[z.ahuIdx - 1],
+          transparent: true,
+          opacity: 0.32
+        });
+        const line = new THREE.Line(geo, mat);
+        line.userData = { ahuIdx: z.ahuIdx, floor: z.fl };
+        ductGroup.add(line);
+        ductLines.push(line);
+      });
+    }
+
+    function updateFloorPositions() {
+      const spacing = state.exploded ? FLOOR_H * 2.05 : FLOOR_H;
+      floorGroups.forEach((fg, i) => {
+        fg.position.y = i * spacing;
+        fg.visible = state.floorFilter === 'all' || Number(state.floorFilter) === i;
+      });
+      rooftopGroup.position.y = spacing * 3 + 0.08;
+      rooftopGroup.visible = state.floorFilter === 'all' || state.floorFilter === '2';
+      rebuildDucts();
+      applyVisibilityFilters();
+    }
+
+    function applyVisibilityFilters() {
+      zoneMeshes.forEach(m => {
+        const ahuOk = state.ahuFilter === 'all' || Number(state.ahuFilter) === m.userData.ahuIdx;
+        m.material.opacity = ahuOk ? (m.userData.roomId === state.selectedRoomId ? 0.98 : 0.84) : 0.14;
+      });
+      ductGroup.visible = state.showDucts;
+      ductLines.forEach(l => {
+        const flOk = state.floorFilter === 'all' || Number(state.floorFilter) === l.userData.floor;
+        const ahuOk = state.ahuFilter === 'all' || Number(state.ahuFilter) === l.userData.ahuIdx;
+        l.visible = flOk && ahuOk;
+      });
+    }
+
+    // =========================================================================
+    // 5. Color Mapping & UI Rendering
+    // =========================================================================
+    function tempToColor(tempK, band) {
+      const lo = band[0], hi = band[1];
+      const c = new THREE.Color();
+      if (tempK < lo) {
+        const t = Math.min(1, (lo - tempK) / 5.0);
+        c.setRGB(0.06 + 0.08 * (1 - t), 0.72 - 0.34 * t, 0.51 + 0.45 * t); // emerald -> deep blue
+        return c;
+      }
+      if (tempK > hi) {
+        const t = Math.min(1, (tempK - hi) / 5.0);
+        c.setRGB(0.06 + 0.88 * t, 0.72 - 0.45 * t, 0.51 - 0.35 * t); // emerald -> amber/red
+        return c;
+      }
+      return c.setHex(0x10b981); // comfortable emerald
+    }
+
+    function renderSparkline() {
+      const svg = document.getElementById('sparklineSvg');
+      const steps = state.rollout.steps;
+      if (!steps.length) return;
+      const losses = steps.map(s => Math.abs(s.reward));
+      const maxL = Math.max(0.001, ...losses);
+      const w = 260, h = 54;
+      const pts = losses.map((v, i) => {
+        const x = (i / Math.max(1, losses.length - 1)) * w;
+        const y = h - 4 - (v / maxL) * (h - 10);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(' ');
+
+      const curX = (state.stepIdx / Math.max(1, steps.length - 1)) * w;
+      svg.innerHTML = `
+        <polyline fill="none" stroke="#38bdf8" stroke-width="1.5" points="${pts}" />
+        <line x1="${curX.toFixed(1)}" y1="2" x2="${curX.toFixed(1)}" y2="${h - 2}" stroke="#f43f5e" stroke-width="1.5" stroke-dasharray="2,2" />
+      `;
+    }
+
+    function renderStep() {
+      const steps = state.rollout.steps;
+      if (!steps.length) return;
+      const idx = Math.max(0, Math.min(steps.length - 1, state.stepIdx));
+      const s = steps[idx];
+      const band = s.band_k || COMFORT_DAY;
+
+      // Update 3D zone colors & 5K alerts
+      let alertCount = 0;
+      for (let i = 0; i < zoneMeshes.length; i++) {
+        const zt = s.zone_temps_k[i] !== undefined ? s.zone_temps_k[i] : 295.0;
+        const dev = zt < band[0] ? (band[0] - zt) : (zt > band[1] ? (zt - band[1]) : 0);
+        zoneMeshes[i].material.color.copy(tempToColor(zt, band));
+        const isSelected = zoneMeshes[i].userData.roomId === state.selectedRoomId;
+        zoneMeshes[i].material.emissive.setHex(isSelected ? 0x38bdf8 : 0x000000);
+        zoneMeshes[i].material.emissiveIntensity = isSelected ? 0.35 : 0.0;
+
+        if (dev > 5.0) {
+          alertCount++;
+          alertEdges[i].material.opacity = 0.95;
+        } else {
+          alertEdges[i].material.opacity = 0.0;
+        }
+      }
+
+      const alertBadge = document.getElementById('alertBadge');
+      if (alertCount > 0) {
+        alertBadge.classList.remove('hidden');
+        document.getElementById('alertCount').textContent = String(alertCount);
+      } else {
+        alertBadge.classList.add('hidden');
+      }
+
+      // Update Rooftop AHUs
+      const ahuHtml = [];
+      ahuUnits.forEach((u, i) => {
+        const a = (s.ahus && s.ahus[i]) || { id: `ahu_${i + 1}`, on: 0, sat_k: 295, pressure_pa: 0, recirc: 0.7 };
+        u.strip.material.emissiveIntensity = a.on ? 0.85 : 0.06;
+        const satC = (a.sat_k - 273.15).toFixed(1);
+        const statusClass = a.on ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : 'bg-slate-800 text-slate-500 border-slate-700';
+        ahuHtml.push(`
+          <div class="flex items-center justify-between bg-slate-900/70 rounded px-2 py-1 border border-slate-800/80">
+            <div class="flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-full" style="background:#${AHU_COLORS[i].toString(16).padStart(6, '0')}"></span>
+              <span class="font-medium text-slate-200">AHU-${i + 1}</span>
+              <span class="mono text-[11px] text-slate-400">${satC}°C · ${a.pressure_pa}Pa</span>
+            </div>
+            <span class="px-1.5 py-0.5 rounded border text-[10px] font-semibold ${statusClass}">${a.on ? 'ON' : 'IDLE'}</span>
+          </div>
+        `);
+      });
+      document.getElementById('ahuList').innerHTML = ahuHtml.join('');
+
+      // Update HWS
+      const hws = s.hws || { on: 0, temp_k: 310, pump_pct: 0, any_heating: false };
+      boiler.material.emissiveIntensity = hws.on ? 0.75 : 0.05;
+      pumpRing.material.emissiveIntensity = hws.on ? 0.85 : 0.05;
+      document.getElementById('hwsDetail').textContent = `수온 ${(hws.temp_k - 273.15).toFixed(1)}°C · 펌프 ${hws.pump_pct}%`;
+      const hwsBadge = document.getElementById('hwsBadge');
+      hwsBadge.textContent = hws.on ? 'ON' : 'OFF';
+      hwsBadge.className = hws.on
+        ? 'px-2 py-0.5 rounded text-[11px] font-semibold bg-orange-500/20 text-orange-300 border border-orange-500/40'
+        : 'px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-800 text-slate-400';
+
+      const bugNote = document.getElementById('hwsBugNote');
+      if (hws.on && !hws.any_heating) {
+        bugNote.classList.remove('hidden');
+      } else {
+        bugNote.classList.add('hidden');
+      }
+
+      // KPIs
+      let cumLoss = 0;
+      for (let i = 0; i <= idx; i++) cumLoss += Math.abs(steps[i].reward);
+      const mae = cumLoss / (idx + 1);
+      document.getElementById('kpiMae').textContent = mae.toFixed(5);
+      document.getElementById('kpiStepReward').textContent = `스텝 보상: ${s.reward.toFixed(4)}`;
+      document.getElementById('kpiOat').textContent = `${(s.oat_k - 273.15).toFixed(1)}°C`;
+      document.getElementById('kpiBand').textContent = `밴드: ${(band[0] - 273.15).toFixed(1)}~${(band[1] - 273.15).toFixed(1)}°C`;
+
+      document.getElementById('modeLabel').textContent = s.is_work ? '쾌적 모드 (주간)' : '에코 모드 (야간/비재실)';
+      document.getElementById('modeDot').className = s.is_work ? 'w-2 h-2 rounded-full bg-emerald-400' : 'w-2 h-2 rounded-full bg-sky-400';
+      document.getElementById('kpiOcc').textContent = String(s.occupancy ?? 0);
+
+      // Selected Zone Inspector
+      const rIdx = Math.max(0, Math.min(38, state.selectedRoomId - 1));
+      const meta = BUILDING_TRAIN_1_ROOMS[rIdx];
+      const zt = s.zone_temps_k[rIdx] ?? 295.0;
+      const dev = zt < band[0] ? (zt - band[0]) : (zt > band[1] ? (zt - band[1]) : 0);
+      document.getElementById('zoneTag').textContent = `room_${meta[0]} / VAV_${meta[0]}`;
+      document.getElementById('ziMeta').textContent = `AHU-${meta[6]} · ${meta[1] + 1}F`;
+      document.getElementById('ziTemp').textContent = `${(zt - 273.15).toFixed(2)}°C (${zt.toFixed(1)}K)`;
+      const devEl = document.getElementById('ziDev');
+      devEl.textContent = `${dev >= 0 ? '+' : ''}${dev.toFixed(2)} K`;
+      devEl.className = Math.abs(dev) > 5.0 ? 'mono text-right font-bold text-rose-400' : (Math.abs(dev) > 0.1 ? 'mono text-right text-amber-300' : 'mono text-right text-emerald-400');
+      document.getElementById('ziDamper').textContent = `${Math.round(((s.dampers && s.dampers[rIdx]) ?? 0.1) * 100)}%`;
+      document.getElementById('ziReheat').textContent = `${Math.round(((s.reheats && s.reheats[rIdx]) ?? 0.0) * 100)}%`;
+
+      // Timeline
+      document.getElementById('timeSlider').max = String(Math.max(0, steps.length - 1));
+      document.getElementById('timeSlider').value = String(idx);
+      document.getElementById('clockLabel').textContent = s.time_label || `Step ${idx}`;
+      document.getElementById('stepLabel').textContent = String(idx + 1);
+      document.getElementById('totalStepsLabel').textContent = String(steps.length);
+      document.getElementById('sparkSource').textContent = state.rollout.source || '로드됨';
+      document.getElementById('scenarioSubtitle').textContent = `${state.rollout.building} · ${state.rollout.weather} · ${state.rollout.policy}`;
+
+      renderSparkline();
+    }
+
+    // =========================================================================
+    // 6. Toast & Rollout JSON Import / Export
+    // =========================================================================
+    let toastTimer = null;
+    function showToast(msg) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.classList.remove('hidden');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.add('hidden'), 3400);
+    }
+
+    function loadRolloutJson(text, filename) {
+      try {
+        const data = JSON.parse(text);
+        if (!data || !Array.isArray(data.steps) || data.steps.length === 0) {
+          showToast('오류: JSON에 비어 있지 않은 "steps" 배열이 필요합니다.');
+          return;
+        }
+        state.rollout = {
+          source: filename || '업로드 JSON',
+          building: data.building || 'building_train_1',
+          weather: data.weather || 'custom',
+          policy: data.policy || 'custom_policy',
+          steps: data.steps
+        };
+        state.stepIdx = 0;
+        renderStep();
+        showToast(`로드 완료: ${state.rollout.policy} (${data.steps.length}스텝)`);
+      } catch (err) {
+        showToast('JSON 파싱 실패: 유효한 롤아웃 JSON 파일인지 확인해 주세요.');
+      }
+    }
+
+    // =========================================================================
+    // 7. Pointer Orbit, Zoom & Zone Raycasting
+    // =========================================================================
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+
+    canvas.addEventListener('pointerdown', (e) => {
+      camState.dragging = true;
+      camState.moved = false;
+      camState.lastX = e.clientX;
+      camState.lastY = e.clientY;
+    });
+
+    window.addEventListener('pointermove', (e) => {
+      if (!camState.dragging) return;
+      const dx = e.clientX - camState.lastX;
+      const dy = e.clientY - camState.lastY;
+      if (Math.abs(dx) + Math.abs(dy) > 3) camState.moved = true;
+      camState.lastX = e.clientX;
+      camState.lastY = e.clientY;
+      camState.theta -= dx * 0.008;
+      camState.phi = Math.max(0.18, Math.min(Math.PI * 0.48, camState.phi - dy * 0.007));
+      updateCamera();
+    });
+
+    window.addEventListener('pointerup', (e) => {
+      if (!camState.dragging) return;
+      camState.dragging = false;
+      if (!camState.moved) {
+        const rect = canvas.getBoundingClientRect();
+        pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(pointer, camera);
+        const visibleZones = zoneMeshes.filter(m => floorGroups[m.userData.floor].visible);
+        const hits = raycaster.intersectObjects(visibleZones, false);
+        if (hits.length > 0) {
+          state.selectedRoomId = hits[0].object.userData.roomId;
+          applyVisibilityFilters();
+          renderStep();
+        }
+      }
+    });
+
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      camState.radius = Math.max(16, Math.min(72, camState.radius + e.deltaY * 0.025));
+      updateCamera();
+    }, { passive: false });
+
+    // =========================================================================
+    // 8. UI Control Event Listeners
+    // =========================================================================
+    document.querySelectorAll('.floor-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.floorFilter = btn.dataset.floor;
+        document.querySelectorAll('.floor-btn').forEach(b => {
+          const active = b.dataset.floor === state.floorFilter;
+          b.className = active
+            ? 'floor-btn px-2 py-1 rounded bg-sky-500 text-slate-950 font-semibold'
+            : 'floor-btn px-2 py-1 rounded text-slate-300 hover:bg-slate-800';
+        });
+        updateFloorPositions();
+      });
+    });
+
+    document.getElementById('explodeBtn').addEventListener('click', (e) => {
+      state.exploded = !state.exploded;
+      e.currentTarget.textContent = `층 분리: ${state.exploded ? 'ON' : 'OFF'}`;
+      updateFloorPositions();
+    });
+
+    document.getElementById('ductsBtn').addEventListener('click', (e) => {
+      state.showDucts = !state.showDucts;
+      e.currentTarget.textContent = `AHU 덕트: ${state.showDucts ? 'ON' : 'OFF'}`;
+      applyVisibilityFilters();
+    });
+
+    document.getElementById('resetCamBtn').addEventListener('click', () => {
+      camState.theta = Math.PI * 0.24;
+      camState.phi = Math.PI * 0.30;
+      camState.radius = 38;
+      updateCamera();
+    });
+
+    document.getElementById('ahuFilterSelect').addEventListener('change', (e) => {
+      state.ahuFilter = e.target.value;
+      applyVisibilityFilters();
+    });
+
+    document.getElementById('presetSelect').addEventListener('change', (e) => {
+      state.rollout = generateDemoRollout(e.target.value);
+      state.stepIdx = 96;
+      renderStep();
+      showToast(`프리셋 전환: ${state.rollout.policy}`);
+    });
+
+    document.getElementById('playPauseBtn').addEventListener('click', (e) => {
+      state.playing = !state.playing;
+      e.currentTarget.textContent = state.playing ? '일시정지' : '재생';
+    });
+
+    document.getElementById('stepPrevBtn').addEventListener('click', () => {
+      state.playing = false;
+      document.getElementById('playPauseBtn').textContent = '재생';
+      state.stepIdx = Math.max(0, state.stepIdx - 1);
+      renderStep();
+    });
+
+    document.getElementById('stepNextBtn').addEventListener('click', () => {
+      state.playing = false;
+      document.getElementById('playPauseBtn').textContent = '재생';
+      state.stepIdx = Math.min(state.rollout.steps.length - 1, state.stepIdx + 1);
+      renderStep();
+    });
+
+    document.getElementById('speedSelect').addEventListener('change', (e) => {
+      state.speed = Number(e.target.value) || 4;
+    });
+
+    document.getElementById('timeSlider').addEventListener('input', (e) => {
+      state.stepIdx = Number(e.target.value) || 0;
+      renderStep();
+    });
+
+    document.getElementById('jsonFileInput').addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => loadRolloutJson(String(reader.result || ''), file.name);
+      reader.readAsText(file);
+      e.target.value = '';
+    });
+
+    document.getElementById('downloadSampleBtn').addEventListener('click', () => {
+      const sample = {
+        building: state.rollout.building,
+        weather: state.rollout.weather,
+        policy: state.rollout.policy,
+        steps: state.rollout.steps.slice(0, 48)
+      };
+      const blob = new Blob([JSON.stringify(sample, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `rollout_sample_${sample.weather}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      showToast('48스텝 샘플 롤아웃 JSON을 다운로드했습니다.');
+    });
+
+    // Drag & Drop JSON onto Main Workspace
+    const dropZone = document.getElementById('dropZone');
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.classList.add('drop-active');
+    });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drop-active'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('drop-active');
+      const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => loadRolloutJson(String(reader.result || ''), file.name);
+      reader.readAsText(file);
+    });
+
+    // =========================================================================
+    // 9. Resize & Main Animation Loop
+    // =========================================================================
+    function handleResize() {
+      const w = Math.max(300, container.clientWidth);
+      const h = Math.max(420, container.clientHeight);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h, false);
+    }
+    window.addEventListener('resize', handleResize);
+
+    function animate(now) {
+      requestAnimationFrame(animate);
+      const dt = Math.min(0.1, (now - state.lastFrameTime) / 1000 || 0.016);
+      state.lastFrameTime = now;
+
+      // Spin active AHU fans
+      const cur = state.rollout.steps[state.stepIdx];
+      if (cur && cur.ahus) {
+        ahuUnits.forEach((u, i) => {
+          if (cur.ahus[i] && cur.ahus[i].on) {
+            u.fan.rotation.y += dt * (4 + (cur.ahus[i].pressure_pa || 400) / 300);
+          }
+        });
+      }
+
+      // Advance timeline when playing
+      if (state.playing && state.rollout.steps.length > 1) {
+        state.stepAccum += dt * state.speed * 1.6;
+        if (state.stepAccum >= 1) {
+          const advance = Math.floor(state.stepAccum);
+          state.stepAccum -= advance;
+          state.stepIdx = (state.stepIdx + advance) % state.rollout.steps.length;
+          renderStep();
+        }
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    // Initialize
+    updateFloorPositions();
+    updateCamera();
+    handleResize();
+    renderStep();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
