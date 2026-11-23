@@ -1,6 +1,6 @@
 """Generalized Smart Buildings Competition toolkit package."""
 
-from toolkit.forecasters import (
+from .forecasters import (
     BaseOATForecaster,
     ForecastResult,
     NoForecast,
@@ -9,7 +9,7 @@ from toolkit.forecasters import (
     TimesFM25Forecaster,
     build_forecaster,
 )
-from toolkit.policy_core import GeneralizedHVACPolicy, PolicyConfig
+from .policy_core import GeneralizedHVACPolicy, PolicyConfig
 
 __all__ = [
     "BaseOATForecaster",
