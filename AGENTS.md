@@ -35,7 +35,11 @@
 
 * `smart_buildings/run_floor_generator.py` / `run_scenario_generator.py`: 절차적 건물 및 시나리오 생성기 (`minneapolis` 포함 미사용 기상 스트립 활용 가능).
 
-* `oat_forecast_ablation.py`: Arm A(개선 베이스라인), Arm B(경량 주기 예측), Arm C(TimesFM 2.5), Arm D(Oracle) 비교 및 미공개 테스트 10개 자동 생성·평가 스크립트.
+* `smart_buildings_toolkit/`: 실험 도구 모음. 진입점은 `scripts/run_experiment.py`(`--mode smoke|rep5|all40|export3d`), 내부에 `toolkit/policy_core.py`(`PolicyConfig`, `GeneralizedHVACPolicy`), `forecasters.py`(Arm A/B/C/D), `evaluator.py`, `scenarios.py`, `exporter_3d.py`, `optimizer_cma.py`, `paths.py`가 있습니다. 루트의 `run_kaggle_experiment.py`·`oat_forecast_ablation.py`는 이 스크립트로 위임하는 deprecated 래퍼입니다.
+
+* `kaggle/`: Kaggle 노트북(`smart_buildings_ablation.ipynb`)과 푸시 메타데이터(`kernel-metadata.json`). 장시간 실험은 이 노트북으로 업로드해 실행합니다(§5).
+
+* `docs/`: 실험 리포트(`run<N>.md`). 실험 종료 시 결과 표와 관찰을 커밋합니다.
 
 ## 3. 정책 인터페이스 계약 (필수 준수)
 
@@ -99,9 +103,36 @@ class TransferPolicy:
 * **외기 온도 예측 절제 실험 + 미공개 절차적 테스트 10개 검증**:
 
   ```
-  python oat_forecast_ablation.py --arms A B D --shipped-mode rep5 --extra-test-count 10
-  
+  python smart_buildings_toolkit/scripts/run_experiment.py --mode rep5 --arms A B D --extra-test-count 10
+
   ```
+
+* **Kaggle 노트북에서 실행 (장시간 실험 기본 경로)**:
+
+  * 인증: Kaggle Settings → API → **Generate New Token**으로 발급한 `KGAT_…` 토큰을 시스템 환경변수 `KAGGLE_API_TOKEN`으로 정의합니다(`kaggle` CLI ≥ 1.8.0 필요). legacy `~/.kaggle/kaggle.json`은 선택이며, 토큰 값은 문서·로그·커밋에 남기지 않습니다.
+
+  * 노트북 정의: `kaggle/smart_buildings_ablation.ipynb`(셀: 클론 → `pip install -e . --no-deps` + `timesfm` → smoke → rep5 A/B/C/D → 결과 피벗)와 `kaggle/kernel-metadata.json`(id `kabonzz/notebookaf13d60ffe`, Internet ON, GPU 불필요 — 시뮬레이터가 CPU 바운드).
+
+  * 업로드·실행(버전이 올라가며 즉시 재실행됨):
+
+    ```
+    python -m kaggle kernels push -p kaggle/
+
+    ```
+
+  * 상태 확인 / 결과 회수:
+
+    ```
+    python -m kaggle kernels status kabonzz/notebookaf13d60ffe
+    python -m kaggle kernels output kabonzz/notebookaf13d60ffe -p ablation_results/kaggle_run
+
+    ```
+
+  * `kernels output`은 `/kaggle/working` 전체를 받으므로 클론본(`kaggle_run/smart-buildings-competition/`, 약 100MB)이 함께 내려옵니다 — 받은 뒤 삭제하세요. 결과 CSV는 `ablation_results/kaggle_run/ablation_results/`에 있습니다.
+
+  * 노트북 셀은 `--skip-install`을 붙여 러너의 자동 `pip install`을 막습니다(설치는 노트북 셀에서 직접 수행).
+
+* **실험 리포트**: 실험을 마치면 `docs/run<N>.md`에 조건·결과 표·관찰·다음 단계를 정리해 커밋합니다(예: `docs/run1.md`).
 
 * **정적 검사 / 린트**:
 
