@@ -61,6 +61,7 @@ def run_rollout(
     steps: int = FULL_EPISODE_STEPS,
     config: PolicyConfig | None = None,
     record_oat: bool = False,
+    arm_label: str | None = None,
 ) -> tuple[ScenarioResult, np.ndarray | None]:
     env = load_hybrid_environment(config_dir / "config.gin")
     meta = create_building_meta_data(env, config_dir)
@@ -96,7 +97,7 @@ def run_rollout(
 
     res = ScenarioResult(
         split=split,
-        arm=forecaster.arm_name,
+        arm=arm_label or forecaster.arm_name,
         building=config_dir.parent.name,
         weather=config_dir.name,
         steps=actual_steps,
@@ -116,28 +117,31 @@ def print_summary(results: list[ScenarioResult], baseline_returns: dict[str, Any
         arms = sorted({r.arm for r in sub_all})
         print(f"\n=== [{split_name}] Aggregate Summary & 30-Scenario Runtime Projection ===")
         print(
-            f"{'Arm':18s} | {'Scen':>4s} | {'Mean MAE':>9s} | {'Delta vs A':>10s} | "
+            f"{'Arm':24s} | {'Scen':>4s} | {'Mean MAE':>9s} | {'Delta vs Ref':>12s} | "
             f"{'Policy(s)':>9s} | {'Fcst(s)':>8s} | {'Proj 30x (min)':>14s}"
         )
-        print("-" * 86)
+        print("-" * 94)
 
-        arm_a_mae = None
+        ref_mae = None
         rows = []
         for a in arms:
             sub = [r for r in sub_all if r.arm == a]
             mean_mae = float(np.mean([r.mae_vs_zero for r in sub]))
-            if a.startswith("Arm_A"):
-                arm_a_mae = mean_mae
+            if a.startswith(("Arm_A", "R2_A")):
+                ref_mae = mean_mae
             tot_pol = sum(r.policy_wall_s for r in sub)
             tot_fcst = sum(r.forecast_wall_s for r in sub)
             proj_30_min = (tot_pol * (30.0 / max(1, len(sub)))) / 60.0
             rows.append((a, len(sub), mean_mae, tot_pol, tot_fcst, proj_30_min))
 
+        if ref_mae is None and rows:
+            ref_mae = rows[0][2]
+
         for a, n_sc, mean_mae, tot_pol, tot_fcst, proj_30_min in rows:
-            delta = (mean_mae - arm_a_mae) if arm_a_mae is not None else 0.0
+            delta = (mean_mae - ref_mae) if ref_mae is not None else 0.0
             flag = " (OK)" if proj_30_min * 60 < KAGGLE_LIMIT_SECONDS * 0.7 else " (TIGHT!)"
             print(
-                f"{a:18s} | {n_sc:4d} | {mean_mae:9.5f} | {delta:+10.5f} | "
+                f"{a:24s} | {n_sc:4d} | {mean_mae:9.5f} | {delta:+12.5f} | "
                 f"{tot_pol:9.2f} | {tot_fcst:8.2f} | {proj_30_min:9.1f}{flag}"
             )
 

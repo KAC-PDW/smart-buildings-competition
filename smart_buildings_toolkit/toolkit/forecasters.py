@@ -100,6 +100,80 @@ class PeriodicHeuristicForecaster(BaseOATForecaster):
         return ForecastResult(p50_k=p50, p10_k=p50 - spread, p90_k=p50 + spread)
 
 
+class DiurnalAdaptiveForecaster(BaseOATForecaster):
+    """Arm E: Multi-day EWMA diurnal profile + bias correction + empirical quantile spread."""
+
+    arm_name = "Arm_E_DiurnalAdaptive"
+
+    def __init__(self, horizon_hours: int = 6, bias_alpha: float = 0.35, day_decay: float = 0.60) -> None:
+        super().__init__(horizon_hours=horizon_hours)
+        self.bias_alpha = float(bias_alpha)
+        self.day_decay = float(day_decay)
+        self._pending_1h_pred: float | None = None
+        self._ewma_bias: float = 0.0
+        self._err_hist: deque[float] = deque(maxlen=48)
+
+    def reset(self) -> None:
+        super().reset()
+        self._pending_1h_pred = None
+        self._ewma_bias = 0.0
+        self._err_hist.clear()
+
+    def _predict_hourly(self, step_idx: int) -> ForecastResult | None:
+        hourly = self._hourly_series()
+        if len(hourly) < 2:
+            return None
+        curr = float(hourly[-1])
+        if self._pending_1h_pred is not None:
+            err = float(np.clip(curr - self._pending_1h_pred, -10.0, 10.0))
+            self._ewma_bias = self.bias_alpha * err + (1.0 - self.bias_alpha) * self._ewma_bias
+            self._err_hist.append(err)
+
+        slope = float(np.clip(hourly[-1] - hourly[-2], -3.0, 3.0))
+        h = np.arange(1, self.horizon_hours + 1, dtype=np.float32)
+
+        n = len(hourly)
+        if n >= 24 + self.horizon_hours:
+            w_sum = 0.0
+            diurnal_now = 0.0
+            diurnal_future = np.zeros(self.horizon_hours, dtype=np.float32)
+            d = 0
+            while 25 + 24 * d <= n:
+                w = self.day_decay ** d
+                now_idx = n - 25 - 24 * d
+                fut_start = n - 24 * (d + 1)
+                fut_end = fut_start + self.horizon_hours
+                diurnal_now += w * float(hourly[now_idx])
+                diurnal_future += w * hourly[fut_start:fut_end]
+                w_sum += w
+                d += 1
+            diurnal_now /= w_sum
+            diurnal_future /= w_sum
+            p50 = (
+                diurnal_future
+                + (curr - diurnal_now) * np.exp(-0.12 * h)
+                + 0.35 * self._ewma_bias * np.exp(-0.20 * h)
+                + 0.35 * slope * (1.0 - np.exp(-0.40 * h)) * np.exp(-0.25 * h)
+            )
+        else:
+            p50 = (
+                curr
+                + slope * (1.0 - np.exp(-0.35 * h)) / 0.35
+                + 0.35 * self._ewma_bias * np.exp(-0.25 * h)
+            )
+
+        if len(self._err_hist) >= 6:
+            emp_std = float(np.std(np.asarray(self._err_hist, dtype=np.float32)))
+            spread = np.maximum(0.6, 1.2816 * emp_std * np.sqrt(h)) + 0.15 * h
+        else:
+            spread = 0.8 + 0.35 * h
+
+        p50 = p50.astype(np.float32)
+        spread = spread.astype(np.float32)
+        self._pending_1h_pred = float(p50[0])
+        return ForecastResult(p50_k=p50, p10_k=p50 - spread, p90_k=p50 + spread)
+
+
 class TimesFM25Forecaster(BaseOATForecaster):
     """Arm C: Zero-shot TimesFM 2.5 (200M) hourly forecaster."""
 
@@ -234,4 +308,6 @@ def build_forecaster(
         if oracle_trace is None:
             raise ValueError("Arm D (Oracle) requires `oracle_trace`.")
         return OracleForecaster(oracle_trace, horizon_hours=horizon_hours)
+    if arm == "E":
+        return DiurnalAdaptiveForecaster(horizon_hours=horizon_hours)
     raise ValueError(f"Unknown arm: {arm}")
