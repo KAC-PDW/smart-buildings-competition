@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Mapping
+from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 TOOLKIT_DIR = Path(__file__).resolve().parents[1]
 if str(TOOLKIT_DIR) not in sys.path:
@@ -21,24 +24,21 @@ from toolkit.policy_core import PolicyConfig  # noqa: E402
 TEMPLATE = '''"""Auto-generated TransferPolicy from validated PolicyConfig."""
 
 from collections.abc import Mapping
+from pathlib import Path
+import sys
 from typing import Any
 
 import numpy as np
+
+_TOOLKIT_DIR = Path(__file__).resolve().parents[2] / "smart_buildings_toolkit"
+if str(_TOOLKIT_DIR) not in sys.path:
+    sys.path.insert(0, str(_TOOLKIT_DIR))
 
 from toolkit.forecasters import NoForecast, PeriodicHeuristicForecaster
 from toolkit.policy_core import GeneralizedHVACPolicy, PolicyConfig
 
 BEST_CONFIG = PolicyConfig(
-    kp={kp},
-    ki={ki},
-    kd={kd},
-    zone_damper_full_k={zone_damper_full_k},
-    reheat_full_k={reheat_full_k},
-    reset_full_k={reset_full_k},
-    reset_effort_quantile={reset_effort_quantile},
-    worst_zone_guard_k={worst_zone_guard_k},
-    use_sensor_band={use_sensor_band},
-    fix_hws_cooling_bug={fix_hws_cooling_bug},
+{config_fields}
 )
 
 
@@ -56,6 +56,13 @@ class TransferPolicy:
 '''
 
 
+def _format_config_fields(cfg: PolicyConfig) -> str:
+    lines = []
+    for k, v in asdict(cfg).items():
+        lines.append(f"    {k}={repr(v)},")
+    return "\n".join(lines)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Write transfer_policy.py from PolicyConfig JSON")
     parser.add_argument("--config-json", type=Path, default=None)
@@ -69,16 +76,7 @@ def main() -> None:
 
     cfg = PolicyConfig.load(args.config_json) if args.config_json and args.config_json.exists() else PolicyConfig()
     code = TEMPLATE.format(
-        kp=cfg.kp,
-        ki=cfg.ki,
-        kd=cfg.kd,
-        zone_damper_full_k=cfg.zone_damper_full_k,
-        reheat_full_k=cfg.reheat_full_k,
-        reset_full_k=cfg.reset_full_k,
-        reset_effort_quantile=cfg.reset_effort_quantile,
-        worst_zone_guard_k=cfg.worst_zone_guard_k,
-        use_sensor_band=cfg.use_sensor_band,
-        fix_hws_cooling_bug=cfg.fix_hws_cooling_bug,
+        config_fields=_format_config_fields(cfg),
         use_heuristic=bool(args.use_heuristic),
     )
     compile(code, str(args.target), "exec")

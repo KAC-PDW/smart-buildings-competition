@@ -42,6 +42,47 @@ def ensure_editable_install(skip_install: bool = False) -> None:
 def _run_single_job(job: dict[str, Any]) -> tuple[Any, Any]:
     """Worker entrypoint for sequential or ProcessPoolExecutor rollouts."""
     os.chdir(job["repo_root"])
+    if job["arm_code"] == "TRANSFER":
+        import time
+        from smart_buildings.baselines.transfer_policy import TransferPolicy
+        from smart_buildings.evaluate import create_building_meta_data, load_hybrid_environment
+        from toolkit.evaluator import ScenarioResult, reset_env, step_env
+
+        cdir = Path(job["config_dir"])
+        env = load_hybrid_environment(cdir / "config.gin")
+        meta = create_building_meta_data(env, cdir)
+        policy = TransferPolicy(meta, env.action_spec())
+        obs = reset_env(env)
+        total_reward = 0.0
+        policy_wall_s = 0.0
+        env_wall_s = 0.0
+        actual_steps = 0
+        for _ in range(job["steps"]):
+            t0 = time.perf_counter()
+            action = policy.get_action(obs)
+            policy_wall_s += time.perf_counter() - t0
+            t1 = time.perf_counter()
+            obs, reward, done = step_env(env, action)
+            env_wall_s += time.perf_counter() - t1
+            total_reward += reward
+            actual_steps += 1
+            if done:
+                break
+        res = ScenarioResult(
+            split=job["split"],
+            arm=job["arm_label"] or "transfer",
+            building=cdir.parent.name,
+            weather=cdir.name,
+            steps=actual_steps,
+            total_reward=total_reward,
+            mae_vs_zero=abs(total_reward) / max(1, actual_steps),
+            policy_wall_s=policy_wall_s,
+            forecast_wall_s=0.0,
+            forecast_calls=0,
+            env_wall_s=env_wall_s,
+        )
+        return res, None
+
     from toolkit.evaluator import run_rollout
     from toolkit.forecasters import build_forecaster
     from toolkit.policy_core import PolicyConfig
@@ -113,7 +154,11 @@ def _build_run2_specs() -> tuple[list[tuple[str, str, Any, bool]], list[tuple[st
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generalized Smart Buildings Experiment Runner")
-    parser.add_argument("--mode", choices=["smoke", "rep5", "all40", "run2", "export3d"], default="smoke")
+    parser.add_argument(
+        "--mode",
+        choices=["smoke", "rep5", "all40", "run2", "official30", "export3d"],
+        default="smoke",
+    )
     parser.add_argument("--arms", nargs="+", default=["A", "B", "D"], choices=["A", "B", "C", "D", "E"])
     parser.add_argument("--extra-test-count", type=int, default=10)
     parser.add_argument("--workers", type=int, default=1)
@@ -148,13 +193,18 @@ def main() -> None:
         f"mode={args.mode}, workers={args.workers}) ==="
     )
 
-    if args.mode in ("smoke", "rep5", "all40", "run2"):
+    if args.mode in ("smoke", "rep5", "all40", "run2", "official30"):
         steps = 288 if args.mode == "smoke" else FULL_EPISODE_STEPS
-        extra_n = 2 if args.mode == "smoke" else args.extra_test_count
+        if args.mode == "smoke":
+            extra_n = 2
+        elif args.mode == "official30":
+            extra_n = 0
+        else:
+            extra_n = args.extra_test_count
         sc_dir = REPO_ROOT / DEFAULT_SCENARIOS_DIR
 
         queue: list[tuple[str, Path]] = []
-        pairs = load_shipped_pairs(REPO_ROOT) if args.mode == "all40" else DEFAULT_5_SCENARIOS
+        pairs = load_shipped_pairs(REPO_ROOT) if args.mode in ("all40", "official30") else DEFAULT_5_SCENARIOS
         for b, w in pairs:
             queue.append(("shipped", sc_dir / b / w))
 
@@ -171,7 +221,26 @@ def main() -> None:
                 print(f"[SKIP] Missing {cdir}")
 
         results = []
-        if args.mode == "run2":
+        if args.mode == "official30":
+            wave1_jobs = [
+                {
+                    "repo_root": str(REPO_ROOT),
+                    "config_dir": str(cdir),
+                    "split": split,
+                    "arm_code": "TRANSFER",
+                    "arm_label": "transfer",
+                    "steps": steps,
+                    "cfg_dict": asdict(cfg),
+                    "record_oat": False,
+                    "oracle_trace": None,
+                    "timesfm_model": args.timesfm_model,
+                    "device": args.device,
+                    "keep_result": True,
+                }
+                for split, cdir in valid_queue
+            ]
+            oracle_templates = {}
+        elif args.mode == "run2":
             shipped_specs, extra_specs = _build_run2_specs()
             wave1_jobs: list[dict[str, Any]] = []
             oracle_templates: dict[str, dict[str, Any]] = {}
@@ -328,6 +397,28 @@ def main() -> None:
         print_summary(results, b_ret)
         csv_p, json_p = save_results(results, out_dir)
         print(f"\nSaved results -> {csv_p}, {json_p}")
+
+        if args.mode == "official30":
+            official_dir = out_dir / "official30_results"
+            for r in results:
+                s_dir = official_dir / r.building / r.weather / "transfer"
+                s_dir.mkdir(parents=True, exist_ok=True)
+                (s_dir / "summary.json").write_text(
+                    json.dumps({"total_reward": r.total_reward, "total_steps": r.steps}, indent=2)
+                )
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "score_leaderboard.py"),
+                    str(official_dir),
+                    "--policy",
+                    "transfer",
+                    "--expect",
+                    "30",
+                ],
+                cwd=str(REPO_ROOT),
+                check=False,
+            )
 
     if args.mode in ("smoke", "export3d"):
         cdir = REPO_ROOT / DEFAULT_SCENARIOS_DIR / args.export_building / args.export_weather
