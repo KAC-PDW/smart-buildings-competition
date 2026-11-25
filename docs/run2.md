@@ -83,3 +83,52 @@ python smart_buildings_toolkit/scripts/run_experiment.py \
 
 1. **`R2_C_Ramp_Heuristic`을 공식 `TransferPolicy`에 반영하고 30개 공식 시나리오 전체 평가 실행** — `score_leaderboard.py`로 전체 기준선 `pid_water`(**0.054141**) 돌파 여부 검증.
 2. **온화한/극한 기후 미세 조정** — `atlanta_2` 소폭 악화 완화(`precool_ramp_start_delta_k` / `adaptive_eco_cap`) 및 `fairbanks_1` 추가 개선 여지 탐색.
+
+## 7. 공식 30개 시나리오 전체 평가 (`TransferPolicy`, version 4)
+
+- 날짜: 2026-11-25 (KST)
+- 실행 위치: Kaggle Notebook (`kabonzz/notebookaf13d60ffe`, version 4, CPU 4 workers, Internet ON)
+- 저장소 커밋: `4ac0588`
+- 규모: 공식 30개 시나리오(6개 건물 × 5개 기상) × 8,640스텝 = 259,200스텝
+- 소요: 전체 노트북 10,457초(약 2시간 54분), 정책 추론 합계 **639.08초(약 10.7분)**
+
+### 7.1 실행 명령
+
+```bash
+python smart_buildings_toolkit/scripts/run_experiment.py --mode official30 --workers 4 --skip-install
+python score_leaderboard.py ablation_results/official30_results --policy transfer --expect 30
+```
+
+### 7.2 공식 리더보드 점수 (`score_leaderboard.py`)
+
+| 정책 | 30개 시나리오 평균 MAE | `pid_water` 대비 | 비고 |
+| --- | --- | --- | --- |
+| **`transfer` (Run 2 `R2_C`)** | **0.041093** | **−0.013048 (−24.1%)** | **전 기상·전체 평균 1위** |
+| `pid_water` | 0.054141 | — | 공식 최고 기준선 |
+| `fixed_setpoint` | 0.065915 | +0.011774 | — |
+| `pid` | 0.067356 | +0.013215 | — |
+| `bang_bang` | 0.225203 | +0.171062 | — |
+
+### 7.3 도시별 평균 MAE (6개 건물 평균)
+
+| 도시 | `transfer` | `pid_water` | `fixed_setpoint` | `pid` | 최우수 기준선 대비 |
+| --- | --- | --- | --- | --- | --- |
+| `atlanta` | **0.02982** | 0.03010 | 0.03306 | 0.04180 | −0.00028 (−0.9%) |
+| `denver` | **0.03588** | 0.03735 | 0.07682 | 0.04956 | −0.00147 (−3.9%) |
+| `fairbanks` | **0.07092** | 0.07847 | 0.07427 | 0.07546 | −0.00335 (−4.5%) |
+| `phoenix` | **0.04384** | 0.07814 | 0.12021 | 0.09499 | −0.03430 (−43.9%) |
+| `singapore` | **0.02501** | 0.04665 | 0.02522 | 0.07497 | −0.00021 (−0.8%) |
+
+### 7.4 최악 5개 시나리오 및 산출물
+
+- 최악 5개 시나리오:
+  1. `building_train_1/fairbanks_1`: **0.16578** (`return -1432.3`, best baseline `fixed_setpoint` 0.14749)
+  2. `building_train_8/fairbanks_8`: **0.07870** (`return -680.0`, best baseline `pid_water` 0.07723)
+  3. `building_train_2/fairbanks_2`: **0.07617** (`return -658.1`, best baseline `pid_water` 0.07981)
+  4. `building_train_1/phoenix_5`: **0.06022** (`return -520.3`, best baseline `fixed_setpoint` 0.12952)
+  5. `building_train_7/fairbanks_7`: **0.05865** (`return -506.7`, best baseline `pid_water` 0.05372)
+- 산출물 (`AGENTS.md §6`에 따라 비커밋):
+  - `ablation_results/kaggle_official30/ablation_results/ablation_summary.csv`
+  - `ablation_results/kaggle_official30/ablation_results/ablation_summary.json`
+  - `ablation_results/kaggle_official30/ablation_results/official30_results/`
+  - `ablation_results/kaggle_official30/notebookaf13d60ffe.log`
