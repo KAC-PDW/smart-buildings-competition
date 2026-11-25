@@ -204,11 +204,59 @@ def _build_run3_specs() -> tuple[list[tuple[str, str, Any, bool]], list[tuple[st
     return shipped_specs, extra_specs
 
 
+def _build_run4_specs() -> tuple[list[tuple[str, str, Any, bool]], list[tuple[str, str, Any, bool]]]:
+    from toolkit.policy_core import PolicyConfig
+
+    r4_a = PolicyConfig(
+        fix_hws_cooling_bug=True,
+        fix_sensor_band_precond=True,
+        fix_hws_pump_demand_check=True,
+        worst_zone_guard_heat_k=999.0,
+        enable_cold_hws_boost=True,
+        reheat_full_k=1.5,
+        reset_full_k=3.0,
+        reset_effort_quantile=0.50,
+        use_continuous_precond=True,
+        adaptive_eco_cap=True,
+        pre_window_hours=3,
+        precool_margin_k=1.0,
+        preheat_margin_k=1.0,
+    )
+    r4_b = PolicyConfig(
+        **{
+            **asdict(r4_a),
+            "use_soft_heat_guard": True,
+            "soft_heat_guard_deadband_k": 1.5,
+            "use_heat_pressure_scaling": False,
+            "use_continuous_eco_cap": True,
+            "adaptive_eco_cap": False,
+            "precool_ramp_start_delta_k": 1.0,
+            "cold_temper_margin_k": 0.35,
+        }
+    )
+    r4_c = PolicyConfig(
+        **{
+            **asdict(r4_b),
+            "use_heat_pressure_scaling": True,
+        }
+    )
+    shipped_specs = [
+        ("R4_A_Run2Ref", "B", r4_a, False),
+        ("R4_B_DeadbandNoPScale", "B", r4_b, False),
+        ("R4_C_DeadbandWithPScale", "B", r4_c, False),
+    ]
+    extra_specs = [
+        ("R4_A_Run2Ref", "B", r4_a, False),
+        ("R4_B_DeadbandNoPScale", "B", r4_b, False),
+    ]
+    return shipped_specs, extra_specs
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generalized Smart Buildings Experiment Runner")
     parser.add_argument(
         "--mode",
-        choices=["smoke", "rep5", "all40", "run2", "run3", "official30", "export3d"],
+        choices=["smoke", "rep5", "all40", "run2", "run3", "run4", "official30", "export3d"],
         default="smoke",
     )
     parser.add_argument("--arms", nargs="+", default=["A", "B", "D"], choices=["A", "B", "C", "D", "E"])
@@ -245,7 +293,7 @@ def main() -> None:
         f"mode={args.mode}, workers={args.workers}) ==="
     )
 
-    if args.mode in ("smoke", "rep5", "all40", "run2", "run3", "official30"):
+    if args.mode in ("smoke", "rep5", "all40", "run2", "run3", "run4", "official30"):
         steps = 288 if args.mode == "smoke" else FULL_EPISODE_STEPS
         if args.mode == "smoke":
             extra_n = 2
@@ -261,11 +309,17 @@ def main() -> None:
             queue.append(("shipped", sc_dir / b / w))
 
         if extra_n > 0:
+            is_div = args.mode == "run4"
+            extra_dir_name = "extra_test_scenarios_diverse" if is_div else "extra_test_scenarios"
+            extra_split_name = "unseen_diverse" if is_div else "unseen_extra"
             extra_dirs = ensure_extra_test_scenarios(
-                REPO_ROOT, REPO_ROOT / "smart_buildings" / "extra_test_scenarios", count=extra_n
+                REPO_ROOT,
+                REPO_ROOT / "smart_buildings" / extra_dir_name,
+                count=extra_n,
+                diverse=is_div,
             )
             for d in extra_dirs:
-                queue.append(("unseen_extra", d))
+                queue.append((extra_split_name, d))
 
         valid_queue = [(split, cdir) for split, cdir in queue if (cdir / "config.gin").exists()]
         for split, cdir in queue:
@@ -292,8 +346,13 @@ def main() -> None:
                 for split, cdir in valid_queue
             ]
             oracle_templates = {}
-        elif args.mode in ("run2", "run3"):
-            shipped_specs, extra_specs = _build_run2_specs() if args.mode == "run2" else _build_run3_specs()
+        elif args.mode in ("run2", "run3", "run4"):
+            if args.mode == "run2":
+                shipped_specs, extra_specs = _build_run2_specs()
+            elif args.mode == "run3":
+                shipped_specs, extra_specs = _build_run3_specs()
+            else:
+                shipped_specs, extra_specs = _build_run4_specs()
             wave1_jobs: list[dict[str, Any]] = []
             oracle_templates: dict[str, dict[str, Any]] = {}
             for split, cdir in valid_queue:

@@ -47,7 +47,7 @@ def build_lbo_splits(repo_root: Path) -> list[tuple[str, list[Path], list[Path]]
     return splits
 
 
-def select_unused_weather_strips(repo_root: Path, count: int) -> list[str]:
+def select_unused_weather_strips(repo_root: Path, count: int, diverse: bool = False) -> list[str]:
     used = {w for _, w in load_shipped_pairs(repo_root)}
     weather_dir = repo_root / DEFAULT_WEATHER_DIR
     all_strips = sorted(p.stem for p in weather_dir.glob("*.yaml"))
@@ -58,6 +58,21 @@ def select_unused_weather_strips(repo_root: Path, count: int) -> list[str]:
         by_station.setdefault(w.rsplit("_", 1)[0], []).append(w)
 
     picked: list[str] = []
+    if diverse:
+        stations = []
+        if "minneapolis" in by_station:
+            stations.append("minneapolis")
+        stations.extend(sorted(k for k in by_station if k != "minneapolis"))
+        idx = 0
+        while len(picked) < count and stations:
+            st = stations[idx % len(stations)]
+            if by_station[st]:
+                picked.append(by_station[st].pop(0))
+                idx += 1
+            else:
+                stations.remove(st)
+        return picked[:count]
+
     minn = by_station.pop("minneapolis", [])
     picked.extend(minn[: min(5, count)])
 
@@ -84,6 +99,7 @@ def ensure_extra_test_scenarios(
     extra_scenarios_dir: Path,
     count: int = 10,
     start_seed: int = 500,
+    diverse: bool = False,
 ) -> list[Path]:
     """Generate `count` unseen procedural buildings x unused weather strips."""
     extra_scenarios_dir.mkdir(parents=True, exist_ok=True)
@@ -126,7 +142,7 @@ def ensure_extra_test_scenarios(
             f"Requested {count} unseen buildings, found only {len(proc_buildings)} under {buildings_dir}."
         )
 
-    unused_weathers = select_unused_weather_strips(repo_root, count)
+    unused_weathers = select_unused_weather_strips(repo_root, count, diverse=diverse)
     generated: list[Path] = []
     for b_yaml, w_stem in zip(proc_buildings[:count], unused_weathers):
         w_yaml = weather_dir / f"{w_stem}.yaml"
