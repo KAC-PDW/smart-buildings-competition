@@ -152,11 +152,63 @@ def _build_run2_specs() -> tuple[list[tuple[str, str, Any, bool]], list[tuple[st
     return shipped_specs, extra_specs
 
 
+def _build_run3_specs() -> tuple[list[tuple[str, str, Any, bool]], list[tuple[str, str, Any, bool]]]:
+    from toolkit.policy_core import PolicyConfig
+
+    r3_a = PolicyConfig(
+        fix_hws_cooling_bug=True,
+        fix_sensor_band_precond=True,
+        fix_hws_pump_demand_check=True,
+        worst_zone_guard_heat_k=999.0,
+        enable_cold_hws_boost=True,
+        reheat_full_k=1.5,
+        reset_full_k=3.0,
+        reset_effort_quantile=0.50,
+        use_continuous_precond=True,
+        adaptive_eco_cap=True,
+        pre_window_hours=3,
+        precool_margin_k=1.0,
+        preheat_margin_k=1.0,
+    )
+    r3_b = PolicyConfig(
+        **{
+            **asdict(r3_a),
+            "use_soft_heat_guard": True,
+            "use_heat_pressure_scaling": True,
+        }
+    )
+    r3_c = PolicyConfig(
+        **{
+            **asdict(r3_b),
+            "use_continuous_eco_cap": True,
+            "adaptive_eco_cap": False,
+            "precool_ramp_start_delta_k": 1.0,
+        }
+    )
+    r3_d = PolicyConfig(
+        **{
+            **asdict(r3_c),
+            "cold_temper_margin_k": 0.35,
+        }
+    )
+    shipped_specs = [
+        ("R3_A_Run2Ref", "B", r3_a, False),
+        ("R3_B_SoftColdGuard", "B", r3_b, False),
+        ("R3_C_ContSetback", "B", r3_c, False),
+        ("R3_D_FullColdPhys", "B", r3_d, False),
+    ]
+    extra_specs = [
+        ("R3_A_Run2Ref", "B", r3_a, False),
+        ("R3_D_FullColdPhys", "B", r3_d, False),
+    ]
+    return shipped_specs, extra_specs
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generalized Smart Buildings Experiment Runner")
     parser.add_argument(
         "--mode",
-        choices=["smoke", "rep5", "all40", "run2", "official30", "export3d"],
+        choices=["smoke", "rep5", "all40", "run2", "run3", "official30", "export3d"],
         default="smoke",
     )
     parser.add_argument("--arms", nargs="+", default=["A", "B", "D"], choices=["A", "B", "C", "D", "E"])
@@ -193,7 +245,7 @@ def main() -> None:
         f"mode={args.mode}, workers={args.workers}) ==="
     )
 
-    if args.mode in ("smoke", "rep5", "all40", "run2", "official30"):
+    if args.mode in ("smoke", "rep5", "all40", "run2", "run3", "official30"):
         steps = 288 if args.mode == "smoke" else FULL_EPISODE_STEPS
         if args.mode == "smoke":
             extra_n = 2
@@ -240,8 +292,8 @@ def main() -> None:
                 for split, cdir in valid_queue
             ]
             oracle_templates = {}
-        elif args.mode == "run2":
-            shipped_specs, extra_specs = _build_run2_specs()
+        elif args.mode in ("run2", "run3"):
+            shipped_specs, extra_specs = _build_run2_specs() if args.mode == "run2" else _build_run3_specs()
             wave1_jobs: list[dict[str, Any]] = []
             oracle_templates: dict[str, dict[str, Any]] = {}
             for split, cdir in valid_queue:

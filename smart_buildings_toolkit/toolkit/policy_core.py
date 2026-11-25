@@ -44,6 +44,14 @@ class PolicyConfig:
     adaptive_eco_cap: bool = False
     eco_cap_hot_oat_margin_k: float = 2.0
     eco_cap_cold_oat_k: float = 263.15
+    use_soft_heat_guard: bool = False
+    soft_heat_guard_min_w: float = 0.35
+    soft_heat_guard_ramp_lo_k: float = 2.0
+    soft_heat_guard_ramp_hi_k: float = 4.5
+    use_heat_pressure_scaling: bool = False
+    heat_pressure_min_scale: float = 0.35
+    use_continuous_eco_cap: bool = False
+    cold_temper_margin_k: float = 0.0
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -111,7 +119,70 @@ class GeneralizedHVACPolicy(PIDWaterResetPolicy):
                 hi = lo + 0.1
         return lo, hi
 
+    def _command_zones(
+        self,
+        continuous: np.ndarray,
+        zones: list[tuple[str, int, dict[str, int]]],
+        obs: np.ndarray,
+        low: float,
+        high: float,
+    ) -> None:
+        super()._command_zones(continuous, zones, obs, low, high)
+        if self.cfg.cold_temper_margin_k <= 0.0 or not np.isfinite(self._last_oat_k) or self._last_oat_k >= 273.15:
+            return
+        for vav_id, obs_idx, action_indices in zones:
+            if not action_indices:
+                continue
+            reheat_idx = action_indices.get("reheat_valve_percentage_command")
+            if reheat_idx is None:
+                continue
+            lo, hi = self._zone_band(obs, vav_id, low, high)
+            temp = self._denormalize_zone_temp(obs[obs_idx])
+            if self._deadband_error(temp, lo, hi) == 0.0:
+                margin = lo + self.cfg.cold_temper_margin_k - temp
+                if margin > 0.0:
+                    opening = min(0.35, margin / self.REHEAT_FULL_K)
+                    continuous[reheat_idx] = max(float(continuous[reheat_idx]), 2.0 * opening - 1.0)
+
     def _ahu_error(self, obs: np.ndarray, ctrl: dict[str, Any], low: float, high: float) -> float:
+        if self.cfg.use_soft_heat_guard:
+            temps = []
+            errs = []
+            for vav_id, obs_idx, _ in ctrl["zones"]:
+                temp = self._denormalize_zone_temp(obs[obs_idx])
+                temps.append(temp)
+                lo, hi = self._zone_band(obs, vav_id, low, high)
+                errs.append(self._deadband_error(temp, lo, hi))
+            mean_err = self._deadband_error(float(np.mean(temps)), low, high)
+            worst_cool = min(0.0, min(errs))
+            worst_heat = max(0.0, max(errs))
+            cold_frac = sum(1 for e in errs if e > 0.0) / max(1, len(errs))
+            if abs(worst_cool) >= self.cfg.worst_zone_guard_k:
+                err = worst_cool
+            else:
+                t = float(
+                    np.clip(
+                        (worst_heat - self.cfg.soft_heat_guard_ramp_lo_k)
+                        / max(0.1, self.cfg.soft_heat_guard_ramp_hi_k - self.cfg.soft_heat_guard_ramp_lo_k),
+                        0.0,
+                        1.0,
+                    )
+                )
+                w = self.cfg.soft_heat_guard_min_w + (1.0 - self.cfg.soft_heat_guard_min_w) * t
+                heat_err = max(max(0.0, mean_err), w * worst_heat) if worst_heat > 0.0 else 0.0
+                if mean_err < 0.0 and worst_heat < self.cfg.soft_heat_guard_ramp_lo_k:
+                    err = mean_err
+                elif heat_err > 0.0:
+                    err = heat_err
+                else:
+                    err = mean_err
+            ctrl["_last_err"] = err
+            ctrl["_last_worst_heat"] = worst_heat
+            ctrl["_last_cold_frac"] = cold_frac
+            if err > 0.0:
+                self._any_ahu_heating = True
+            return err
+
         worst = self._worst_zone_error(obs, ctrl, low, high)
         heat_guard = (
             self.cfg.worst_zone_guard_k
@@ -125,6 +196,9 @@ class GeneralizedHVACPolicy(PIDWaterResetPolicy):
         else:
             temps = [self._denormalize_zone_temp(obs[j]) for j in ctrl["zone_obs_indices"]]
             err = self._deadband_error(float(np.mean(temps)), low, high)
+        ctrl["_last_err"] = err
+        ctrl["_last_worst_heat"] = max(0.0, worst)
+        ctrl["_last_cold_frac"] = 1.0
         if err > 0.0:
             self._any_ahu_heating = True
         return err
@@ -183,7 +257,34 @@ class GeneralizedHVACPolicy(PIDWaterResetPolicy):
             is_work = day < 5 and self.morning_start_hour <= hour < self.evening_start_hour
 
         adj_low, adj_high = low, high
-        if self.cfg.adaptive_eco_cap and not is_work:
+        if self.cfg.use_continuous_eco_cap and not is_work:
+            is_weekend_day = (day >= 5) and not (day == 6 and hour >= self.evening_start_hour)
+            hot_vals = [
+                v
+                for v in (oat_k, float(np.max(forecast.p50_k)) if forecast is not None else float("nan"))
+                if np.isfinite(v)
+            ]
+            if hot_vals:
+                hot_ref = max(hot_vals)
+                if hot_ref > comfort_hi:
+                    hot_sev = float(np.clip((hot_ref - comfort_hi) / 10.0, 0.0, 1.0))
+                    cap_hi = comfort_hi + (3.0 - 2.0 * hot_sev) + (1.5 if is_weekend_day else 0.0)
+                    adj_high = min(adj_high, cap_hi)
+
+            cold_vals = [
+                v
+                for v in (oat_k, float(np.min(forecast.p50_k)) if forecast is not None else float("nan"))
+                if np.isfinite(v)
+            ]
+            if cold_vals:
+                cold_ref = min(cold_vals)
+                if cold_ref < comfort_lo - 15.0:
+                    cold_sev = float(np.clip(((comfort_lo - 15.0) - cold_ref) / 35.0, 0.0, 1.0))
+                    cap_lo = comfort_lo - (2.8 - 2.6 * cold_sev) - (
+                        1.5 if (is_weekend_day and cold_ref >= 248.15) else 0.0
+                    )
+                    adj_low = max(adj_low, cap_lo)
+        elif self.cfg.adaptive_eco_cap and not is_work:
             hot_ref = float(np.max(forecast.p50_k)) if forecast is not None else float("nan")
             if (np.isfinite(oat_k) and oat_k > comfort_hi - self.cfg.eco_cap_hot_oat_margin_k) or (
                 np.isfinite(hot_ref) and hot_ref > comfort_hi - self.cfg.eco_cap_hot_oat_margin_k
@@ -249,6 +350,23 @@ class GeneralizedHVACPolicy(PIDWaterResetPolicy):
 
         cont = np.asarray(action["continuous_action"], dtype=np.float32)
         disc = np.asarray(action["discrete_action"], dtype=np.int32)
+
+        if self.cfg.use_heat_pressure_scaling:
+            for ctrl in self.ahu_controllers:
+                p_idx = ctrl.get("pressure_idx")
+                if p_idx is None:
+                    continue
+                if disc[ctrl["run_discrete_idx"]] == 1 and ctrl.get("_last_err", 0.0) > 0.0:
+                    sev = float(np.clip((ctrl.get("_last_worst_heat", 0.0) - 2.5) / 2.0, 0.0, 1.0))
+                    scale = float(
+                        np.clip(
+                            max(self.cfg.heat_pressure_min_scale, ctrl.get("_last_cold_frac", 1.0), sev),
+                            self.cfg.heat_pressure_min_scale,
+                            1.0,
+                        )
+                    )
+                    u_eff = abs(float(cont[ctrl["temp_idx"]])) * scale
+                    cont[p_idx] = np.float32(np.clip(2.0 * u_eff - 1.0, -1.0, 1.0))
 
         if self.cfg.fix_hws_cooling_bug:
             if self.cfg.fix_hws_pump_demand_check:
