@@ -39,9 +39,18 @@ BEST_CONFIG = PolicyConfig(
     use_continuous_precond=True,
     precool_ramp_start_delta_k=-1.0,
     preheat_ramp_start_delta_k=5.0,
-    adaptive_eco_cap=True,
+    adaptive_eco_cap=False,
     eco_cap_hot_oat_margin_k=2.0,
     eco_cap_cold_oat_k=263.15,
+    use_soft_heat_guard=True,
+    soft_heat_guard_deadband_k=1.5,
+    soft_heat_guard_min_w=0.35,
+    soft_heat_guard_ramp_lo_k=2.0,
+    soft_heat_guard_ramp_hi_k=4.5,
+    use_heat_pressure_scaling=True,
+    heat_pressure_min_scale=0.35,
+    use_continuous_eco_cap=True,
+    cold_temper_margin_k=0.35,
 )
 
 

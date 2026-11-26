@@ -269,7 +269,7 @@ class GeneralizedHVACPolicy(PIDWaterResetPolicy):
                 hot_ref = max(hot_vals)
                 if hot_ref > comfort_hi:
                     hot_sev = float(np.clip((hot_ref - comfort_hi) / 10.0, 0.0, 1.0))
-                    cap_hi = comfort_hi + (3.0 - 2.0 * hot_sev) + (1.5 if is_weekend_day else 0.0)
+                    cap_hi = comfort_hi + (2.0 - 1.5 * hot_sev) + (1.0 if is_weekend_day else 0.0)
                     adj_high = min(adj_high, cap_hi)
 
             cold_vals = [

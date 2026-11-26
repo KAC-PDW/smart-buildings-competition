@@ -295,12 +295,7 @@ def main() -> None:
 
     if args.mode in ("smoke", "rep5", "all40", "run2", "run3", "run4", "official30"):
         steps = 288 if args.mode == "smoke" else FULL_EPISODE_STEPS
-        if args.mode == "smoke":
-            extra_n = 2
-        elif args.mode == "official30":
-            extra_n = 0
-        else:
-            extra_n = args.extra_test_count
+        extra_n = 2 if args.mode == "smoke" else args.extra_test_count
         sc_dir = REPO_ROOT / DEFAULT_SCENARIOS_DIR
 
         queue: list[tuple[str, Path]] = []
@@ -309,7 +304,7 @@ def main() -> None:
             queue.append(("shipped", sc_dir / b / w))
 
         if extra_n > 0:
-            is_div = args.mode == "run4"
+            is_div = args.mode in ("run4", "official30")
             extra_dir_name = "extra_test_scenarios_diverse" if is_div else "extra_test_scenarios"
             extra_split_name = "unseen_diverse" if is_div else "unseen_extra"
             extra_dirs = ensure_extra_test_scenarios(
@@ -512,6 +507,8 @@ def main() -> None:
         if args.mode == "official30":
             official_dir = out_dir / "official30_results"
             for r in results:
+                if r.split != "shipped":
+                    continue
                 s_dir = official_dir / r.building / r.weather / "transfer"
                 s_dir.mkdir(parents=True, exist_ok=True)
                 (s_dir / "summary.json").write_text(
