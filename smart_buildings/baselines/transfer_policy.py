@@ -44,6 +44,7 @@ BEST_CONFIG = PolicyConfig(
     eco_cap_cold_oat_k=263.15,
     use_soft_heat_guard=True,
     soft_heat_guard_deadband_k=1.5,
+    soft_heat_guard_max_oat_delta_k=4.0,
     soft_heat_guard_min_w=0.35,
     soft_heat_guard_ramp_lo_k=2.0,
     soft_heat_guard_ramp_hi_k=4.5,

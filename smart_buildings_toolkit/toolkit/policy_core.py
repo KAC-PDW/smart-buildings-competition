@@ -46,6 +46,7 @@ class PolicyConfig:
     eco_cap_cold_oat_k: float = 263.15
     use_soft_heat_guard: bool = False
     soft_heat_guard_deadband_k: float = 0.0
+    soft_heat_guard_max_oat_delta_k: float | None = None
     soft_heat_guard_min_w: float = 0.35
     soft_heat_guard_ramp_lo_k: float = 2.0
     soft_heat_guard_ramp_hi_k: float = 4.5
@@ -158,13 +159,20 @@ class GeneralizedHVACPolicy(PIDWaterResetPolicy):
             worst_cool = min(0.0, min(errs))
             worst_heat = max(0.0, max(errs))
             cold_frac = sum(1 for e in errs if e > 0.0) / max(1, len(errs))
+            comfort_lo = self.comfort_temp_window[0]
+            oat_allows_heat_guard = (
+                self.cfg.soft_heat_guard_max_oat_delta_k is None
+                or not np.isfinite(self._last_oat_k)
+                or self._last_oat_k < comfort_lo - self.cfg.soft_heat_guard_max_oat_delta_k
+                or worst_heat >= self.cfg.soft_heat_guard_ramp_hi_k
+            )
             if abs(worst_cool) >= self.cfg.worst_zone_guard_k or (
                 abs(worst_cool) > worst_heat and worst_heat < self.cfg.soft_heat_guard_ramp_hi_k
             ):
                 err = worst_cool if abs(worst_cool) >= self.cfg.worst_zone_guard_k else mean_err
             elif mean_err < 0.0 and worst_heat < self.cfg.soft_heat_guard_ramp_hi_k:
                 err = mean_err
-            elif worst_heat >= self.cfg.soft_heat_guard_deadband_k and worst_heat > 0.0:
+            elif oat_allows_heat_guard and worst_heat >= self.cfg.soft_heat_guard_deadband_k and worst_heat > 0.0:
                 t = float(
                     np.clip(
                         (worst_heat - self.cfg.soft_heat_guard_ramp_lo_k)

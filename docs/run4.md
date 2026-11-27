@@ -76,3 +76,64 @@ python smart_buildings_toolkit/scripts/run_experiment.py \
 
 1. **`R4_C_DeadbandWithPScale` + Run 2 고온 예냉 기준(`precool_ramp_start_delta_k=-1.0`, 고온 야간 캡 강화)** 조합을 공식 `TransferPolicy`에 반영.
 2. **공식 30개 시나리오 전체 평가 + `unseen_diverse` 6개 기후 통합 검증**(36롤아웃)을 실행해 기존 공식 최고점 **0.041093** 갱신 여부 확인.
+
+## 7. 공식 30개 시나리오 + 6개 기후 다기후 통합 평가 (`TransferPolicy`, version 7)
+
+- 날짜: 2026-11-26 ~ 2026-11-27 (KST)
+- 실행 위치: Kaggle Notebook (`kabonzz/notebookaf13d60ffe`, version 7, CPU 4 workers, Internet ON)
+- 저장소 커밋: `21c0e85`
+- 규모: 공식 30개 시나리오 + `unseen_diverse` 6개 시나리오 = 총 36롤아웃 × 8,640스텝 = 311,040스텝
+- 소요: 전체 노트북 17,982초(약 5시간 0분), 공식 30시나리오 정책 추론 합계 **698.49초(11.6분)**
+
+### 7.1 실행 명령
+
+```bash
+python smart_buildings_toolkit/scripts/run_experiment.py --mode official30 --extra-test-count 6 --workers 4 --skip-install
+python score_leaderboard.py ablation_results/official30_results --policy transfer --expect 30
+```
+
+### 7.2 공식 30개 시나리오 리더보드 점수 (`score_leaderboard.py`)
+
+| 정책 | 30개 시나리오 평균 MAE | `pid_water` 대비 | Run 2 `v4` 대비 |
+| --- | --- | --- | --- |
+| **`transfer` (Run 4 `v7`)** | **0.039659** | **−0.014482 (−26.7%)** | **−0.001434 (−3.5%)** |
+| `transfer` (Run 2 `v4`) | 0.041093 | −0.013048 (−24.1%) | — |
+| `pid_water` | 0.054141 | — | — |
+| `fixed_setpoint` | 0.065915 | +0.011774 | — |
+| `pid` | 0.067356 | +0.013215 | — |
+| `bang_bang` | 0.225203 | +0.171062 | — |
+
+### 7.3 공식 30개 시나리오 도시별 평균 MAE (6개 건물 평균)
+
+| 도시 | `transfer` (Run 2 `v4`) | **`transfer` (Run 4 `v7`)** | `pid_water` | `fixed_setpoint` | Run 2 대비 |
+| --- | --- | --- | --- | --- | --- |
+| `atlanta` | 0.02982 | **0.02717** | 0.03010 | 0.03306 | **−8.9%** |
+| `denver` | 0.03588 | **0.03022** | 0.03735 | 0.07682 | **−15.8%** |
+| `fairbanks` | 0.07092 | **0.06238** | 0.07847 | 0.07427 | **−12.0%** |
+| `phoenix` | **0.04384** | 0.05330 | 0.07814 | 0.12021 | +21.6% |
+| `singapore` | **0.02501** | 0.02522 | 0.04665 | 0.02522 | +0.8% |
+
+### 7.4 `unseen_diverse` 6개 기후 미공개 합성 건물 (8,640스텝)
+
+| 미공개 건물 / 기상 | Run 2 (`R4_A`) | Run 4 `R4_B` (정압 OFF) | **`transfer` (Run 4 `v7`, 정압 ON)** | Run 2 대비 |
+| --- | --- | --- | --- | --- |
+| `building_0500` / `minneapolis_1` | 0.14393 | 0.12986 | **0.06429** | **−55.3%** |
+| `building_0501` / `atlanta_4` | **0.03153** | 0.03211 | 0.03193 | +1.3% |
+| `building_0502` / `denver_1` | 0.09144 | 0.06478 | **0.06149** | **−32.8%** |
+| `building_0504` / `fairbanks_3` | 0.06445 | **0.04175** | 0.06412 | −0.5% |
+| `building_0505` / `phoenix_2` | 0.02821 | 0.02840 | **0.02754** | **−2.4%** |
+| `building_0506` / `singapore_2` | 0.04626 | 0.04629 | **0.04604** | **−0.5%** |
+| **6개 기후 평균** | 0.06764 | 0.05720 | **0.04924** | **−27.2%** |
+
+### 7.5 최악 5개 시나리오 및 산출물
+
+- 최악 5개 시나리오:
+  1. `building_train_1/fairbanks_1`: 0.16854 (`return -1456.1`)
+  2. `building_train_8/phoenix_4`: 0.09460 (`return -817.4`, Run 2 `v4` 0.05240 대비 상승 — 유일한 남은 회귀 지점)
+  3. `building_train_8/fairbanks_8`: 0.07826 (`return -676.2`)
+  4. `building_train_1/phoenix_5`: 0.06663 (`return -575.6`)
+  5. `building_train_2/phoenix_6`: 0.05117 (`return -442.1`)
+- 산출물 (`AGENTS.md §6`에 따라 비커밋):
+  - `ablation_results/kaggle_official30_v2/ablation_results/ablation_summary.csv`
+  - `ablation_results/kaggle_official30_v2/ablation_results/official30_results/`
+  - `ablation_results/kaggle_official30_v2/notebookaf13d60ffe.log`
